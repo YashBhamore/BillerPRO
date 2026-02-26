@@ -11,7 +11,7 @@ function formatCurrency(val: number) {
 export function SettingsScreen() {
   const {
     state, setUserProfile, setMonthlyTarget,
-    addVendor, updateVendor, deleteVendor, logout, setTheme,
+    addVendor, updateVendor, deleteVendor, logout, setTheme, downloadBillsCsv,
   } = useApp();
 
   const [showVendorSheet, setShowVendorSheet] = useState(false);
@@ -60,6 +60,11 @@ export function SettingsScreen() {
     setMonthlyTarget(parseInt(targetValue) || 0);
     setEditingTarget(false);
     toast.success('Target updated');
+  };
+
+  const handleExport = (scope: 'all' | 'month') => {
+    const filename = downloadBillsCsv(scope);
+    toast.success(`Downloaded ${filename}`);
   };
 
   return (
@@ -173,16 +178,20 @@ export function SettingsScreen() {
       {/* Export */}
       <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
         <p className="text-[#8B8579] mb-3" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>DATA & EXPORT</p>
-        {['Export to Excel', "Export this month's data", 'Export all data'].map(label => (
+        {[
+          { label: 'Export to Excel (.csv)', scope: 'all' as const },
+          { label: "Export this month's data", scope: 'month' as const },
+          { label: 'Export all data', scope: 'all' as const },
+        ].map(item => (
           <button
-            key={label}
-            onClick={() => toast.success('Export started!')}
+            key={item.label}
+            onClick={() => handleExport(item.scope)}
             className="w-full flex items-center justify-between py-3.5 last:border-0 transition-all hover:bg-[#F5F0EB] rounded-lg px-1"
             style={{ borderBottom: '1px solid #F0EBE3' }}
           >
             <div className="flex items-center gap-3">
               <Download className="w-[18px] h-[18px] text-[#8B8579]" />
-              <span className="text-[#1A1816]" style={{ fontSize: 16 }}>{label}</span>
+              <span className="text-[#1A1816]" style={{ fontSize: 16 }}>{item.label}</span>
             </div>
             <ChevronRight className="w-[18px] h-[18px] text-[#C4BFB6]" />
           </button>

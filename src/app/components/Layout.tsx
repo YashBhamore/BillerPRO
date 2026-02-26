@@ -31,9 +31,9 @@ export function Layout() {
   };
 
   return (
-    <div className="h-full w-full flex flex-col" style={{ background: '#FAF9F6' }}>
+    <div className="h-full w-full min-h-0 flex flex-col overflow-hidden" style={{ background: '#FAF9F6' }}>
       {/* Content */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         <AnimatePresence mode="wait">
           <motion.div
             key={state.activeTab}
@@ -50,7 +50,7 @@ export function Layout() {
 
       {/* Bottom Tab Bar */}
       <nav
-        className="border-t flex items-center justify-around flex-shrink-0"
+        className="border-t flex items-center justify-around flex-shrink-0 sticky bottom-0 z-10"
         style={{
           height: 64,
           minHeight: 64,

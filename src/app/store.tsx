@@ -44,37 +44,13 @@ function getVendorColor(index: number) {
   return VENDOR_COLORS[index % VENDOR_COLORS.length];
 }
 
-const defaultVendors: Vendor[] = [
-  { id: 'v1', name: 'Sharma Traders', cutPercent: 10, color: '#D97757' },
-  { id: 'v2', name: 'Patel & Sons', cutPercent: 12, color: '#5C9A6F' },
-  { id: 'v3', name: 'Mehta Enterprises', cutPercent: 15, color: '#D4A853' },
-  { id: 'v4', name: 'Gupta Supplies', cutPercent: 8, color: '#C45C4A' },
-];
+const defaultVendors: Vendor[] = [];
 
-const defaultBills: Bill[] = [
-  { id: 'b1', vendorId: 'v1', customerName: 'Rajesh Kumar', amount: 45200, date: '2025-02-05', confidence: 'high' },
-  { id: 'b2', vendorId: 'v2', customerName: 'Suresh Shah', amount: 28000, date: '2025-02-08', confidence: 'high' },
-  { id: 'b3', vendorId: 'v3', customerName: 'Anita Singh', amount: 62500, date: '2025-02-12', confidence: 'high' },
-  { id: 'b4', vendorId: 'v1', customerName: 'Priya Sharma', amount: 18500, date: '2025-02-15', confidence: 'high' },
-  { id: 'b5', vendorId: 'v4', customerName: 'Amit Patel', amount: 34000, date: '2025-02-18', confidence: 'high' },
-  { id: 'b6', vendorId: 'v2', customerName: 'Deepak Verma', amount: 22000, date: '2025-02-20', confidence: 'high' },
-  { id: 'b7', vendorId: 'v3', customerName: 'Neha Gupta', amount: 15800, date: '2025-02-22', confidence: 'high' },
-  { id: 'b8', vendorId: 'v1', customerName: 'Vikram Singh', amount: 8700, date: '2025-01-05', confidence: 'high' },
-  { id: 'b9', vendorId: 'v2', customerName: 'Rohit Mehta', amount: 42000, date: '2025-01-10', confidence: 'high' },
-  { id: 'b10', vendorId: 'v4', customerName: 'Sanjay Kumar', amount: 19500, date: '2025-01-15', confidence: 'high' },
-  { id: 'b11', vendorId: 'v3', customerName: 'Kavita Reddy', amount: 55000, date: '2025-01-20', confidence: 'high' },
-  { id: 'b12', vendorId: 'v1', customerName: 'Manoj Tiwari', amount: 31000, date: '2025-01-25', confidence: 'high' },
-  { id: 'b13', vendorId: 'v2', customerName: 'Ritu Sharma', amount: 17500, date: '2024-12-05', confidence: 'high' },
-  { id: 'b14', vendorId: 'v4', customerName: 'Arun Joshi', amount: 26000, date: '2024-12-12', confidence: 'high' },
-  { id: 'b15', vendorId: 'v1', customerName: 'Sunita Devi', amount: 38000, date: '2024-12-18', confidence: 'high' },
-  { id: 'b16', vendorId: 'v3', customerName: 'Pankaj Mishra', amount: 47500, date: '2024-11-08', confidence: 'high' },
-  { id: 'b17', vendorId: 'v2', customerName: 'Geeta Rao', amount: 21000, date: '2024-11-15', confidence: 'high' },
-  { id: 'b18', vendorId: 'v4', customerName: 'Ramesh Yadav', amount: 33500, date: '2024-10-10', confidence: 'high' },
-];
+const defaultBills: Bill[] = [];
 
 const defaultState: AppState = {
   isLoggedIn: false,
-  user: { name: 'Arjun Mehta', email: 'arjun@business.com', businessName: 'Mehta Trading Co.' },
+  user: { name: '', email: '', businessName: '' },
   vendors: defaultVendors,
   bills: defaultBills,
   monthlyTarget: 20000,
@@ -117,6 +93,23 @@ function pickPersistable(state: AppState) {
   };
 }
 
+function csvEscape(value: string | number) {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function triggerCsvDownload(filename: string, csv: string) {
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 interface AppContextType {
   state: AppState;
   login: (email: string, password: string) => boolean;
@@ -132,6 +125,7 @@ interface AppContextType {
   setUserProfile: (profile: Partial<UserProfile>) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setClaudeApiKey: (key: string) => void;
+  downloadBillsCsv: (scope: 'month' | 'all') => string;
   getVendor: (id: string) => Vendor | undefined;
   getBillsForMonth: (month: string) => Bill[];
   getEarningsForMonth: (month: string) => number;
@@ -186,7 +180,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteVendor = useCallback((id: string) => {
-    setState(s => ({ ...s, vendors: s.vendors.filter(v => v.id !== id) }));
+    setState(s => ({
+      ...s,
+      vendors: s.vendors.filter(v => v.id !== id),
+      bills: s.bills.filter(b => b.vendorId !== id),
+    }));
   }, []);
 
   const addBill = useCallback((bill: Omit<Bill, 'id'>) => {
@@ -220,6 +218,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(s => ({ ...s, claudeApiKey: key }));
   }, []);
 
+  const downloadBillsCsv = useCallback((scope: 'month' | 'all') => {
+    const sourceBills = scope === 'month'
+      ? state.bills.filter(b => b.date.startsWith(state.selectedMonth))
+      : state.bills;
+
+    const rows: (string | number)[][] = [
+      ['Date', 'Vendor', 'Customer', 'Amount', 'Cut %', 'Earnings', 'Confidence', 'Notes'],
+      ...sourceBills.map(b => {
+        const vendor = state.vendors.find(v => v.id === b.vendorId);
+        const cutPercent = vendor?.cutPercent ?? 0;
+        const earnings = Math.round(((b.amount * cutPercent) / 100) * 100) / 100;
+        return [
+          b.date,
+          vendor?.name ?? 'Unknown Vendor',
+          b.customerName,
+          b.amount,
+          cutPercent,
+          earnings,
+          b.confidence,
+          b.notes ?? '',
+        ];
+      }),
+    ];
+
+    const totalAmount = sourceBills.reduce((sum, b) => sum + b.amount, 0);
+    const totalEarnings = sourceBills.reduce((sum, b) => {
+      const vendor = state.vendors.find(v => v.id === b.vendorId);
+      return sum + (vendor ? (b.amount * vendor.cutPercent) / 100 : 0);
+    }, 0);
+
+    rows.push([]);
+    rows.push(['GRAND TOTAL', '', '', totalAmount, '', Math.round(totalEarnings * 100) / 100, '', '']);
+
+    const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n');
+    const scopeLabel = scope === 'month' ? state.selectedMonth : 'all-data';
+    const filename = `billerpro-${scopeLabel}.csv`;
+    triggerCsvDownload(filename, csv);
+    return filename;
+  }, [state.bills, state.selectedMonth, state.vendors]);
+
   const getVendor = useCallback((id: string) => {
     return state.vendors.find(v => v.id === id);
   }, [state.vendors]);
@@ -244,7 +282,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{
       state, login, logout, setActiveTab, addVendor, updateVendor, deleteVendor,
       addBill, deleteBill, setMonthlyTarget, setSelectedMonth,
-      setUserProfile, setTheme, setClaudeApiKey, getVendor, getBillsForMonth,
+      setUserProfile, setTheme, setClaudeApiKey, downloadBillsCsv, getVendor, getBillsForMonth,
       getEarningsForMonth, getTotalBillsForMonth,
     }}>
       {children}

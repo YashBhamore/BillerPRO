@@ -13,10 +13,16 @@ export default function App() {
   return (
     <AppProvider>
       <div
-        className="h-full w-full flex items-center justify-center bg-[#E8E2D9]"
-        style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" }}
+        className="w-full flex items-center justify-center bg-[#E8E2D9]"
+        style={{
+          minHeight: '100dvh',
+          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+        }}
       >
-        <div className="w-full h-full overflow-hidden" style={{ maxWidth: 430, background: '#FAF9F6' }}>
+        <div
+          className="w-full overflow-hidden"
+          style={{ maxWidth: 430, height: '100dvh', background: '#FAF9F6' }}
+        >
           <AppContent />
         </div>
         <Toaster
