@@ -1,370 +1,315 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Building2, Delete, Fingerprint, KeyRound, UserRound } from 'lucide-react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
+import { ChevronLeft, Fingerprint } from 'lucide-react';
 
 const ACCENT = '#D97757';
-const ACCENT_BG = '#FAF9F6';
-const AUTH_PROFILE_KEY = 'billerpro_pin_profile_v1';
-const AUTH_PIN_KEY = 'billerpro_pin_v1';
-
-type AuthMode = 'loading' | 'setup' | 'pin';
-
-interface PinProfile {
-  name: string;
-  businessName: string;
-  email: string;
-}
-
-function sanitizePin(value: string) {
-  return value.replace(/\D/g, '').slice(0, 4);
-}
-
-function buildFallbackEmail(name: string) {
-  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'user';
-  return `${slug}@billerpro.local`;
-}
-
-function readStoredAuth(): { profile: PinProfile | null; pin: string } {
-  try {
-    const rawProfile = localStorage.getItem(AUTH_PROFILE_KEY);
-    const pin = localStorage.getItem(AUTH_PIN_KEY) || '';
-    if (!rawProfile || !/^\d{4}$/.test(pin)) return { profile: null, pin: '' };
-    const parsed = JSON.parse(rawProfile) as Partial<PinProfile>;
-    if (!parsed?.name || !parsed?.businessName) return { profile: null, pin: '' };
-    return {
-      profile: {
-        name: parsed.name,
-        businessName: parsed.businessName,
-        email: parsed.email || buildFallbackEmail(parsed.name),
-      },
-      pin,
-    };
-  } catch {
-    return { profile: null, pin: '' };
-  }
-}
-
-function saveStoredAuth(profile: PinProfile, pin: string) {
-  localStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(profile));
-  localStorage.setItem(AUTH_PIN_KEY, pin);
-}
-
-function PinDots({ value }: { value: string }) {
-  return (
-    <div className="flex items-center justify-center gap-2 mt-4 mb-4">
-      {[0, 1, 2, 3].map(index => (
-        <div
-          key={index}
-          className="w-3 h-3 rounded-full border"
-          style={{
-            background: value[index] ? ACCENT : '#FFFFFF',
-            borderColor: value[index] ? ACCENT : '#E8E2D9',
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+type View = 'welcome' | 'create-account' | 'pin-setup' | 'pin-login';
 
 export function LoginPage() {
   const { login, setUserProfile } = useApp();
-
-  const [mode, setMode] = useState<AuthMode>('loading');
-  const [savedProfile, setSavedProfile] = useState<PinProfile | null>(null);
-  const [savedPin, setSavedPin] = useState('');
-
-  const [name, setName] = useState('');
-  const [businessName, setBusinessName] = useState('');
-  const [setupPin, setSetupPin] = useState('');
+  const [view, setView] = useState<View>('welcome');
+  const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
-  const [enteredPin, setEnteredPin] = useState('');
-  const [verifying, setVerifying] = useState(false);
+  const [name, setName] = useState('');
+  const [business, setBusiness] = useState('');
+  const [shake, setShake] = useState(false);
 
+  const savedPin = localStorage.getItem('billerpro_pin');
+  const savedName = localStorage.getItem('billerpro_username') || '';
+
+  // Existing user → go straight to PIN login screen (skip welcome)
   useEffect(() => {
-    const { profile, pin } = readStoredAuth();
-    if (profile && pin) {
-      setSavedProfile(profile);
-      setSavedPin(pin);
-      setMode('pin');
-      return;
-    }
-    setMode('setup');
+    if (savedPin && savedName) setView('pin-login');
   }, []);
 
-  const completeLogin = (profile: PinProfile, pin: string) => {
-    setUserProfile(profile);
-    login(profile.email, pin);
-  };
-
-  const handleGoogleClick = () => {
-    toast.info('Google Sign-In button is ready. Connect real Google auth in your production setup.');
-  };
-
-  const handleCreatePin = () => {
-    const cleanName = name.trim();
-    const cleanBusiness = businessName.trim();
-    const pin = sanitizePin(setupPin);
-    const pinConfirm = sanitizePin(confirmPin);
-
-    if (!cleanName || !cleanBusiness) {
-      toast.error('Enter your name and business name');
-      return;
-    }
-    if (!/^\d{4}$/.test(pin)) {
-      toast.error('Create a 4-digit PIN');
-      return;
-    }
-    if (pin !== pinConfirm) {
-      toast.error('PINs do not match');
-      return;
-    }
-
-    const profile: PinProfile = {
-      name: cleanName,
-      businessName: cleanBusiness,
-      email: buildFallbackEmail(cleanName),
-    };
-
-    saveStoredAuth(profile, pin);
-    setSavedProfile(profile);
-    setSavedPin(pin);
-    toast.success('PIN setup complete');
-    completeLogin(profile, pin);
-  };
-
-  const verifyPin = (candidate: string) => {
-    if (!savedProfile) return;
-    setVerifying(true);
-    window.setTimeout(() => {
-      if (candidate === savedPin) {
-        toast.success(`Welcome back, ${savedProfile.name.split(' ')[0]}!`);
-        completeLogin(savedProfile, candidate);
+  // Auto-verify login PIN
+  useEffect(() => {
+    if (view === 'pin-login' && pin.length === 4) {
+      if (pin === savedPin) {
+        setTimeout(() => login('user', 'pin'), 300);
       } else {
-        toast.error('Wrong PIN');
-        setEnteredPin('');
+        setShake(true);
+        setTimeout(() => { setShake(false); setPin(''); }, 600);
+        toast.error('Wrong PIN, try again');
       }
-      setVerifying(false);
-    }, 180);
+    }
+  }, [pin, view]);
+
+  // Auto-verify confirm PIN during setup
+  const isConfirmStep = view === 'pin-setup' && pin.length === 4;
+  useEffect(() => {
+    if (isConfirmStep && confirmPin.length === 4) {
+      if (pin === confirmPin) {
+        localStorage.setItem('billerpro_pin', pin);
+        localStorage.setItem('billerpro_username', name);
+        setUserProfile({ name, businessName: business || name + "'s Business", email: '' });
+        setTimeout(() => { login('user', 'pin'); toast.success('Welcome, ' + name.split(' ')[0] + '!'); }, 300);
+      } else {
+        setShake(true);
+        setTimeout(() => { setShake(false); setConfirmPin(''); }, 600);
+        toast.error("PINs don't match");
+      }
+    }
+  }, [confirmPin]);
+
+  const activePin = isConfirmStep ? confirmPin : pin;
+
+  const handleDigit = (d: string) => {
+    if (activePin.length >= 4) return;
+    isConfirmStep ? setConfirmPin(c => c + d) : setPin(p => p + d);
+  };
+  const handleBack = () => {
+    isConfirmStep ? setConfirmPin(c => c.slice(0,-1)) : setPin(p => p.slice(0,-1));
   };
 
-  const handleDigit = (digit: string) => {
-    if (verifying) return;
-    setEnteredPin(prev => {
-      if (prev.length >= 4) return prev;
-      const next = `${prev}${digit}`;
-      if (next.length === 4) verifyPin(next);
-      return next;
-    });
-  };
+  const PinDots = ({ value, shaking }: { value: string; shaking: boolean }) => (
+    <motion.div className="flex gap-5 justify-center my-8"
+      animate={shaking ? { x: [-10,10,-10,10,0] } : {}}
+      transition={{ duration: 0.4 }}>
+      {[0,1,2,3].map(i => (
+        <motion.div key={i}
+          className="w-4 h-4 rounded-full border-2"
+          style={{ background: i < value.length ? ACCENT : 'transparent', borderColor: i < value.length ? ACCENT : '#E8E2D9' }}
+          animate={{ scale: i === value.length - 1 ? [1, 1.4, 1] : 1 }}
+          transition={{ duration: 0.15 }} />
+      ))}
+    </motion.div>
+  );
 
-  const handleBackspace = () => {
-    if (verifying) return;
-    setEnteredPin(prev => prev.slice(0, -1));
-  };
-
-  const resetLocalLogin = () => {
-    localStorage.removeItem(AUTH_PROFILE_KEY);
-    localStorage.removeItem(AUTH_PIN_KEY);
-    setSavedProfile(null);
-    setSavedPin('');
-    setEnteredPin('');
-    setMode('setup');
-    toast.success('Local PIN login reset on this device');
-  };
-
-  if (mode === 'loading') {
-    return (
-      <div className="h-full flex items-center justify-center" style={{ background: ACCENT_BG }}>
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          className="w-8 h-8 rounded-full border-2 border-[#E8E2D9] border-t-[#D97757]"
-        />
-      </div>
-    );
-  }
+  const Keypad = () => (
+    <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto">
+      {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((key, i) => (
+        <motion.button key={i} whileTap={{ scale: key ? 0.88 : 1 }}
+          onClick={() => key === '⌫' ? handleBack() : key ? handleDigit(key) : null}
+          style={{
+            height: 64, borderRadius: 16, fontSize: key === '⌫' ? 22 : 26, fontWeight: 500,
+            color: '#1A1816', background: key ? '#FFFFFF' : 'transparent',
+            boxShadow: key ? '0 1px 4px rgba(26,24,22,0.08)' : 'none',
+            visibility: (!key && key !== '0') ? 'hidden' : 'visible',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: 'none', cursor: key ? 'pointer' : 'default',
+          }}>
+          {key}
+        </motion.button>
+      ))}
+    </div>
+  );
 
   return (
-    <div className="h-full px-4 py-6 flex items-center justify-center" style={{ background: ACCENT_BG }}>
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-[390px] rounded-3xl p-5"
-        style={{
-          background: '#FFFFFF',
-          boxShadow: '0 12px 30px rgba(26,24,22,0.08)',
-          border: '1px solid #F0EBE3',
-        }}
-      >
-        <div className="mb-5">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-3" style={{ background: '#FDF5F0', color: ACCENT }}>
-            <KeyRound className="w-4 h-4" />
-            <span style={{ fontSize: 12, fontWeight: 700 }}>BillerPRO Secure Login</span>
-          </div>
-          <h1 className="text-[#1A1816]" style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.1 }}>
-            {mode === 'setup' ? 'Create your PIN login' : 'Enter 4-digit PIN'}
-          </h1>
-          <p className="text-[#8B8579] mt-1" style={{ fontSize: 14 }}>
-            {mode === 'setup'
-              ? 'First-time setup. Save your profile and use a PIN for faster logins.'
-              : 'PIN is stored locally on this device. Tap 4 digits to continue.'}
-          </p>
-        </div>
+    <div className="h-full flex flex-col" style={{ background: '#FAF9F6' }}>
+      <AnimatePresence mode="wait">
 
-        <button
-          onClick={handleGoogleClick}
-          className="w-full rounded-xl px-4 py-3 mb-4 flex items-center justify-center gap-2"
-          style={{ border: '1px solid #E8E2D9', background: '#FFFFFF' }}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          <span className="text-[#1A1816]" style={{ fontSize: 15, fontWeight: 600 }}>Continue with Google</span>
-        </button>
+        {/* ── WELCOME ── */}
+        {view === 'welcome' && (
+          <motion.div key="welcome"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, x: -30 }}
+            className="h-full flex flex-col">
 
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-px flex-1 bg-[#F0EBE3]" />
-          <span className="text-[#ADA79F]" style={{ fontSize: 12, fontWeight: 600 }}>OR USE PIN</span>
-          <div className="h-px flex-1 bg-[#F0EBE3]" />
-        </div>
+            {/* Hero area */}
+            <div className="flex-[1.3] relative flex items-center justify-center overflow-hidden"
+              style={{ background: 'linear-gradient(180deg, #F3EAE0 0%, #FAF0E6 50%, #FAF9F6 100%)' }}>
 
-        <AnimatePresence mode="wait">
-          {mode === 'setup' ? (
-            <motion.div
-              key="setup"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="space-y-3"
-            >
-              <div className="relative">
-                <UserRound className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#ADA79F]" />
-                <input
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="Your name"
-                  className="w-full pl-10 pr-4 py-3 rounded-xl outline-none"
-                  style={{ background: '#F5F0EB', border: '1px solid #E8E2D9', fontSize: 15 }}
-                />
+              {/* Background decorative circles */}
+              <div className="absolute top-8 left-6 w-24 h-24 rounded-full" style={{ background: ACCENT, opacity: 0.06 }} />
+              <div className="absolute top-32 right-4 w-14 h-14 rounded-full" style={{ background: '#D4A853', opacity: 0.05 }} />
+              <div className="absolute bottom-24 left-10 w-10 h-10 rounded-full" style={{ background: '#5C9A6F', opacity: 0.05 }} />
+
+              {/* App icon + floating stat cards */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.5, ease: 'easeOut', delay: 0.1 }}
+                style={{ position: 'relative', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+
+                <div style={{
+                  width: 120, height: 120, borderRadius: 32,
+                  background: 'linear-gradient(135deg, #D97757, #C4613C)',
+                  boxShadow: '0 20px 60px rgba(217,119,87,0.4), 0 4px 16px rgba(26,24,22,0.08)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 54,
+                }}>BP</div>
+
+                {/* Floating card left */}
+                <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.5 }}
+                  style={{
+                    position: 'absolute', left: -64, top: 8,
+                    background: '#FFFFFF', borderRadius: 12, padding: '8px 14px',
+                    boxShadow: '0 4px 20px rgba(26,24,22,0.12)',
+                  }}>
+                  <p style={{ fontSize: 10, color: '#8B8579', margin: 0 }}>Earnings</p>
+                  <p style={{ fontSize: 16, fontWeight: 700, color: '#5C9A6F', margin: 0 }}>₹14,270</p>
+                </motion.div>
+
+                {/* Floating card right */}
+                <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.6 }}
+                  style={{
+                    position: 'absolute', right: -60, top: 20,
+                    background: '#FFFFFF', borderRadius: 12, padding: '8px 14px',
+                    boxShadow: '0 4px 20px rgba(26,24,22,0.12)',
+                  }}>
+                  <p style={{ fontSize: 10, color: '#8B8579', margin: 0 }}>Cut %</p>
+                  <p style={{ fontSize: 16, fontWeight: 700, color: ACCENT, margin: 0 }}>11.5%</p>
+                </motion.div>
+              </motion.div>
+
+              {/* Bottom fade into page */}
+              <div className="absolute bottom-0 left-0 right-0 h-20 pointer-events-none"
+                style={{ background: 'linear-gradient(transparent, #FAF9F6)' }} />
+            </div>
+
+            {/* Text + CTA */}
+            <div className="flex-[0.85] flex flex-col items-center justify-center px-8 pb-10">
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }} className="text-center mb-8">
+                <h1 style={{ fontSize: 38, fontWeight: 800, color: ACCENT, letterSpacing: '-0.02em', lineHeight: 1.05 }}>
+                  BillerPRO
+                </h1>
+                <p className="mt-2 text-[#6B6560]" style={{ fontSize: 16, fontWeight: 500 }}>
+                  Track your bills. Know your earnings.
+                </p>
+              </motion.div>
+
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }} className="w-full space-y-3">
+                <motion.button whileTap={{ scale: 0.97 }}
+                  onClick={() => setView('create-account')}
+                  className="w-full py-4 rounded-2xl text-white"
+                  style={{
+                    background: `linear-gradient(135deg, ${ACCENT}, #C4613C)`,
+                    fontSize: 17, fontWeight: 600,
+                    boxShadow: '0 6px 20px rgba(217,119,87,0.35)',
+                    border: 'none', cursor: 'pointer',
+                  }}>
+                  Get Started
+                </motion.button>
+                <p className="text-center text-[#C4BFB6]" style={{ fontSize: 13 }}>
+                  Private · No account needed · Data stays on your device
+                </p>
+              </motion.div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── CREATE ACCOUNT ── */}
+        {view === 'create-account' && (
+          <motion.div key="create"
+            initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 30 }}
+            transition={{ duration: 0.22 }}
+            className="h-full flex flex-col px-7 overflow-y-auto" style={{ paddingTop: 56, paddingBottom: 32 }}>
+
+            <button onClick={() => setView('welcome')}
+              style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4, color: '#8B8579', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer', marginBottom: 32 }}>
+              <ChevronLeft size={16} /> Back
+            </button>
+
+            <h2 style={{ fontSize: 28, fontWeight: 700, color: '#1A1816', margin: 0 }}>Your Profile</h2>
+            <p style={{ color: '#8B8579', fontSize: 15, marginTop: 6, marginBottom: 32 }}>
+              Just your name — to personalise the app
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
+              <div>
+                <label style={{ fontSize: 14, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Your Name *</label>
+                <input value={name} onChange={e => setName(e.target.value)}
+                  placeholder="e.g. Ramesh Mehta" autoFocus
+                  style={{ width: '100%', padding: '14px 16px', borderRadius: 12, fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box' }} />
               </div>
-
-              <div className="relative">
-                <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#ADA79F]" />
-                <input
-                  value={businessName}
-                  onChange={e => setBusinessName(e.target.value)}
-                  placeholder="Business name"
-                  className="w-full pl-10 pr-4 py-3 rounded-xl outline-none"
-                  style={{ background: '#F5F0EB', border: '1px solid #E8E2D9', fontSize: 15 }}
-                />
+              <div>
+                <label style={{ fontSize: 14, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>
+                  Business Name <span style={{ fontWeight: 400, color: '#C4BFB6' }}>(optional)</span>
+                </label>
+                <input value={business} onChange={e => setBusiness(e.target.value)}
+                  placeholder="e.g. Mehta Trading Co."
+                  style={{ width: '100%', padding: '14px 16px', borderRadius: 12, fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box' }} />
               </div>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[#8B8579] mb-1.5" style={{ fontSize: 12, fontWeight: 600 }}>Create PIN</label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    maxLength={4}
-                    value={setupPin}
-                    onChange={e => setSetupPin(sanitizePin(e.target.value))}
-                    placeholder="4 digits"
-                    className="w-full px-4 py-3 rounded-xl outline-none"
-                    style={{ background: '#F5F0EB', border: '1px solid #E8E2D9', fontSize: 15, letterSpacing: '0.2em' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[#8B8579] mb-1.5" style={{ fontSize: 12, fontWeight: 600 }}>Confirm PIN</label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    maxLength={4}
-                    value={confirmPin}
-                    onChange={e => setConfirmPin(sanitizePin(e.target.value))}
-                    placeholder="4 digits"
-                    className="w-full px-4 py-3 rounded-xl outline-none"
-                    style={{ background: '#F5F0EB', border: '1px solid #E8E2D9', fontSize: 15, letterSpacing: '0.2em' }}
-                  />
-                </div>
+            <motion.button whileTap={{ scale: 0.97 }}
+              onClick={() => { if (!name.trim()) { toast.error('Please enter your name'); return; } setView('pin-setup'); }}
+              style={{
+                width: '100%', marginTop: 32, padding: '16px 0', borderRadius: 16, color: '#FFFFFF',
+                background: `linear-gradient(135deg, ${ACCENT}, #C4613C)`, fontSize: 17, fontWeight: 600,
+                boxShadow: '0 4px 16px rgba(217,119,87,0.3)', border: 'none', cursor: 'pointer',
+              }}>
+              Set Up PIN →
+            </motion.button>
+          </motion.div>
+        )}
+
+        {/* ── PIN SETUP ── */}
+        {view === 'pin-setup' && (
+          <motion.div key="pin-setup"
+            initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 30 }}
+            transition={{ duration: 0.22 }}
+            className="h-full flex flex-col px-7" style={{ paddingTop: 56, paddingBottom: 32 }}>
+
+            <button onClick={() => { setView('create-account'); setPin(''); setConfirmPin(''); }}
+              style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 4, color: '#8B8579', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer', marginBottom: 32 }}>
+              <ChevronLeft size={16} /> Back
+            </button>
+
+            <div style={{ textAlign: 'center', flex: 1 }}>
+              <div style={{ width: 56, height: 56, borderRadius: 16, background: '#FDF5F0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <Fingerprint size={28} color={ACCENT} />
               </div>
-
-              <button
-                onClick={handleCreatePin}
-                className="w-full py-3 rounded-xl text-white"
-                style={{ background: ACCENT, fontSize: 15, fontWeight: 700, boxShadow: '0 8px 20px rgba(217,119,87,0.25)' }}
-              >
-                Save Profile & Continue
-              </button>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="pin"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-            >
-              <div className="rounded-2xl p-4 mb-4" style={{ background: '#FDF5F0', border: '1px solid #F4E6DA' }}>
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white" style={{ background: ACCENT }}>
-                    <Fingerprint className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-[#1A1816]" style={{ fontSize: 15, fontWeight: 700 }}>{savedProfile?.name}</p>
-                    <p className="text-[#8B8579]" style={{ fontSize: 13 }}>{savedProfile?.businessName}</p>
-                  </div>
-                </div>
-                <PinDots value={enteredPin} />
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => handleDigit(String(n))}
-                    className="h-12 rounded-xl text-[#1A1816]"
-                    style={{ background: '#FFFFFF', border: '1px solid #E8E2D9', fontSize: 18, fontWeight: 600 }}
-                  >
-                    {n}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={resetLocalLogin}
-                  className="h-12 rounded-xl text-[#8B8579]"
-                  style={{ background: '#F5F0EB', border: '1px solid #E8E2D9', fontSize: 12, fontWeight: 700 }}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDigit('0')}
-                  className="h-12 rounded-xl text-[#1A1816]"
-                  style={{ background: '#FFFFFF', border: '1px solid #E8E2D9', fontSize: 18, fontWeight: 600 }}
-                >
-                  0
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBackspace}
-                  className="h-12 rounded-xl flex items-center justify-center"
-                  style={{ background: '#FFFFFF', border: '1px solid #E8E2D9' }}
-                >
-                  <Delete className="w-4 h-4 text-[#6B6560]" />
-                </button>
-              </div>
-
-              <p className="text-center text-[#8B8579] mt-3" style={{ fontSize: 12 }}>
-                {verifying ? 'Checking PIN...' : 'Tap 4 digits to sign in'}
+              <h2 style={{ fontSize: 26, fontWeight: 700, color: '#1A1816', margin: 0 }}>
+                {!isConfirmStep ? 'Create your PIN' : 'Confirm your PIN'}
+              </h2>
+              <p style={{ color: '#8B8579', fontSize: 15, marginTop: 8 }}>
+                {!isConfirmStep ? '4-digit PIN to protect your data' : 'Enter the same PIN again'}
               </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+              <PinDots value={activePin} shaking={shake} />
+            </div>
+
+            <Keypad />
+          </motion.div>
+        )}
+
+        {/* ── PIN LOGIN (returning user) ── */}
+        {view === 'pin-login' && (
+          <motion.div key="pin-login"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}
+            className="h-full flex flex-col px-7" style={{ paddingTop: 64, paddingBottom: 32 }}>
+
+            <div style={{ textAlign: 'center', flex: 1 }}>
+              {/* Logo */}
+              <motion.div
+                initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.1 }}
+                style={{
+                  width: 88, height: 88, borderRadius: 26,
+                  background: 'linear-gradient(135deg, #D97757, #C4613C)',
+                  boxShadow: '0 12px 32px rgba(217,119,87,0.35)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 42, margin: '0 auto 16px',
+                }}>BP</motion.div>
+
+              <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+                style={{ fontSize: 30, fontWeight: 800, color: ACCENT, letterSpacing: '-0.02em', margin: 0 }}>
+                BillerPRO
+              </motion.h1>
+
+              <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
+                style={{ color: '#8B8579', fontSize: 15, marginTop: 6 }}>
+                Welcome back, {savedName.split(' ')[0]}
+              </motion.p>
+
+              <PinDots value={pin} shaking={shake} />
+            </div>
+
+            <Keypad />
+
+            <button
+              onClick={() => { localStorage.removeItem('billerpro_pin'); localStorage.removeItem('billerpro_username'); setPin(''); setView('welcome'); }}
+              style={{ marginTop: 20, color: '#C4BFB6', fontSize: 13, background: 'none', border: 'none', cursor: 'pointer' }}>
+              Not {savedName.split(' ')[0]}? Switch account
+            </button>
+          </motion.div>
+        )}
+
+      </AnimatePresence>
     </div>
   );
 }
