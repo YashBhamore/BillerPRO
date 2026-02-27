@@ -1,97 +1,57 @@
 import React, { useState, useRef } from 'react';
-import { CloudUpload, FolderOpen, Camera, CheckCircle2, AlertTriangle, Loader2, KeyRound, X } from 'lucide-react';
+import { CloudUpload, FolderOpen, Camera, CheckCircle2, AlertTriangle, Loader2, Key, X, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
 
 type Stage = 'upload' | 'processing' | 'review';
-
-interface ExtractedData {
-  date: string;
-  vendorName: string;
-  customerName: string;
-  amount: string;
-  confidence: {
-    date: 'high' | 'medium' | 'low';
-    vendor: 'high' | 'medium' | 'low';
-    customer: 'high' | 'medium' | 'low';
-    amount: 'high' | 'medium' | 'low';
-  };
-}
+type Confidence = 'high' | 'medium' | 'low';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
-function todayString() {
-  return new Date().toISOString().split('T')[0];
-}
+// ── Claude API call ────────────────────────────────────────────────────────────
+async function extractBillData(
+  fileBase64: string,
+  mimeType: string,
+  apiKey: string,
+  vendorNames: string[],
+): Promise<{
+  customerName: string;
+  amount: string;
+  date: string;
+  vendorHint: string;
+  confidence: { customerName: Confidence; amount: Confidence; date: Confidence };
+}> {
+  const vendorList = vendorNames.length > 0
+    ? `\nKnown vendors in system: ${vendorNames.join(', ')}`
+    : '';
 
-// Convert file to base64
-async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(',')[1]); // strip data:...;base64, prefix
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+  const prompt = `You are reading an Indian GST Tax Invoice (TAX INVOICE).
+${vendorList}
 
-// Call Claude API to extract bill data from a PDF
-async function extractBillWithClaude(file: File, apiKey: string): Promise<ExtractedData> {
-  const base64 = await fileToBase64(file);
-  const isPdf = file.type === 'application/pdf';
-  const mediaType = isPdf ? 'application/pdf' : (file.type as 'image/jpeg' | 'image/png');
+Extract these 4 fields ONLY. Return valid JSON, nothing else:
 
-  const prompt = `You are extracting data from a business bill/invoice document.
-
-Extract exactly these 4 fields and return ONLY a valid JSON object, no other text:
 {
-  "date": "YYYY-MM-DD format, or today's date if not found",
-  "vendorName": "name of the vendor/supplier/company that issued this bill",
-  "customerName": "name of the customer/buyer who paid",
-  "amount": "total amount as a number only (no currency symbols, no commas)",
+  "customerName": "full name from Details of Receiver / Billed To section",
+  "amount": "Net Amount number only (the final total at bottom, no ₹ or Rs symbol)",
+  "date": "Invoice Date in YYYY-MM-DD format",
+  "vendorHint": "name of the company or party who ISSUED/PRINTED this bill (top of bill, not the receiver)",
   "confidence": {
-    "date": "high|medium|low",
-    "vendorName": "high|medium|low",
     "customerName": "high|medium|low",
-    "amount": "high|medium|low"
+    "amount": "high|medium|low",
+    "date": "high|medium|low"
   }
 }
 
 Rules:
-- For amount: extract the TOTAL/GRAND TOTAL amount only. Remove ₹, $, commas. Return pure number like 45200
-- For date: prefer invoice date or bill date. Use YYYY-MM-DD format.
-- confidence "high" = clearly visible in document, "medium" = inferred, "low" = guessed
-- If a field cannot be found, use empty string "" and confidence "low"
-- Return ONLY the JSON. No explanation, no markdown, no code fences.`;
-
-  const body: Record<string, unknown> = {
-    model: 'claude-opus-4-6',
-    max_tokens: 500,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: isPdf ? 'document' : 'image',
-            source: {
-              type: 'base64',
-              media_type: mediaType,
-              data: base64,
-            },
-          },
-          {
-            type: 'text',
-            text: prompt,
-          },
-        ],
-      },
-    ],
-  };
+- customerName = the BUYER (Details of Receiver / Billed To / Name field). NOT the seller at top.
+- amount = Net Amount (final payable total including GST, usually bottom-right of bill)
+- date = Invoice Date (not LR Date or other dates)
+- vendorHint = company name at top of invoice (the SELLER/ISSUER, e.g. "F & F DECOR")
+- For date, if format is DD/MM/YYYY convert to YYYY-MM-DD
+- Return ONLY the JSON object, no explanation`;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -100,445 +60,514 @@ Rules:
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: 'claude-opus-4-6',
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: mimeType === 'application/pdf' ? 'document' : 'image',
+            source: {
+              type: 'base64',
+              media_type: mimeType,
+              data: fileBase64,
+            },
+          },
+          { type: 'text', text: prompt },
+        ],
+      }],
+    }),
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    if (response.status === 401) throw new Error('Invalid API key. Please check your Claude API key in Settings.');
-    if (response.status === 429) throw new Error('Rate limit reached. Please try again in a moment.');
+    if (response.status === 401) throw new Error('Invalid API key. Check your key in Settings.');
+    if (response.status === 429) throw new Error('Too many requests. Wait a moment and try again.');
     throw new Error(err?.error?.message || `API error ${response.status}`);
   }
 
   const data = await response.json();
-  const text = data.content?.[0]?.text || '{}';
+  const text = data.content?.find((b: any) => b.type === 'text')?.text || '';
 
-  // Clean and parse JSON
-  const clean = text.replace(/```json|```/g, '').trim();
+  // Strip any markdown fences if present
+  const clean = text.replace(/```json|```/gi, '').trim();
   const parsed = JSON.parse(clean);
-
-  return {
-    date: parsed.date || todayString(),
-    vendorName: parsed.vendorName || '',
-    customerName: parsed.customerName || '',
-    amount: String(parsed.amount || ''),
-    confidence: {
-      date: parsed.confidence?.date || 'low',
-      vendor: parsed.confidence?.vendorName || 'low',
-      customer: parsed.confidence?.customerName || 'low',
-      amount: parsed.confidence?.amount || 'low',
-    },
-  };
+  return parsed;
 }
 
+// ── File to base64 ─────────────────────────────────────────────────────────────
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove data URL prefix "data:...;base64,"
+      resolve(result.split(',')[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── Main Component ─────────────────────────────────────────────────────────────
 export function UploadBill() {
   const { state, addBill, getVendor, setActiveTab, setClaudeApiKey } = useApp();
   const [stage, setStage] = useState<Stage>('upload');
-  const [showApiKeySheet, setShowApiKeySheet] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState(state.claudeApiKey);
+  const [showApiSheet, setShowApiSheet] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState('');
+  const [showKeyText, setShowKeyText] = useState(false);
+  const [fileName, setFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Extracted & editable fields
-  const [extractedDate, setExtractedDate] = useState(todayString());
-  const [extractedVendorId, setExtractedVendorId] = useState(state.vendors[0]?.id || '');
+  // Extracted fields (editable after scan)
+  const [extractedDate, setExtractedDate] = useState('');
+  const [extractedVendorId, setExtractedVendorId] = useState('');
   const [extractedCustomer, setExtractedCustomer] = useState('');
   const [extractedAmount, setExtractedAmount] = useState('');
-  const [confidence, setConfidence] = useState({ date: 'low', vendor: 'low', customer: 'low', amount: 'low' } as ExtractedData['confidence']);
-  const [processingStatus, setProcessingStatus] = useState('Reading your bill...');
+  const [confidence, setConfidence] = useState<{ customerName: Confidence; amount: Confidence; date: Confidence }>({
+    customerName: 'high', amount: 'high', date: 'high',
+  });
+  const [vendorHint, setVendorHint] = useState('');
 
   const selectedVendor = getVendor(extractedVendorId);
   const amount = parseFloat(extractedAmount) || 0;
   const cut = selectedVendor ? amount * selectedVendor.cutPercent / 100 : 0;
 
-  // Try to match extracted vendor name to existing vendors
-  function matchVendorByName(name: string): string {
-    if (!name) return state.vendors[0]?.id || '';
-    const lower = name.toLowerCase();
-    const match = state.vendors.find(v => v.name.toLowerCase().includes(lower) || lower.includes(v.name.toLowerCase()));
-    return match?.id || state.vendors[0]?.id || '';
+  // Auto-match vendor hint to known vendors (fuzzy)
+  function matchVendor(hint: string): string {
+    if (!hint || state.vendors.length === 0) return '';
+    const h = hint.toLowerCase().trim();
+    // Exact match first
+    const exact = state.vendors.find(v => v.name.toLowerCase() === h);
+    if (exact) return exact.id;
+    // Partial match
+    const partial = state.vendors.find(v =>
+      v.name.toLowerCase().includes(h) || h.includes(v.name.toLowerCase().split(' ')[0])
+    );
+    return partial?.id || '';
   }
 
-  const handleFileSelect = async (file: File) => {
+  // ── Handle file selected ─────────────────────────────────────────────────────
+  async function handleFile(file: File) {
     if (!file) return;
 
-    // Check if API key is set
+    // Check API key
     if (!state.claudeApiKey) {
-      setShowApiKeySheet(true);
+      setShowApiSheet(true);
+      toast.error('Please enter your Claude API key first');
       return;
     }
 
+    const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Please upload a PDF, JPG, or PNG file');
+      return;
+    }
+
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('File too large. Max 20MB.');
+      return;
+    }
+
+    setFileName(file.name);
     setStage('processing');
-    setProcessingStatus('Reading your bill...');
 
     try {
-      setProcessingStatus('AI is extracting details...');
-      const extracted = await extractBillWithClaude(file, state.claudeApiKey);
+      const base64 = await fileToBase64(file);
+      const vendorNames = state.vendors.map(v => v.name);
+      const result = await extractBillData(base64, file.type, state.claudeApiKey, vendorNames);
 
-      setExtractedDate(extracted.date || todayString());
-      setExtractedVendorId(matchVendorByName(extracted.vendorName));
-      setExtractedCustomer(extracted.customerName);
-      setExtractedAmount(extracted.amount);
-      setConfidence(extracted.confidence);
+      // Set extracted values
+      setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
+      setExtractedCustomer(result.customerName || '');
+      setExtractedAmount(result.amount || '');
+      setVendorHint(result.vendorHint || '');
+      setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
+
+      // Try to auto-match vendor
+      const matched = matchVendor(result.vendorHint || '');
+      setExtractedVendorId(matched || state.vendors[0]?.id || '');
+
       setStage('review');
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to extract bill data';
-      toast.error(message);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || 'Failed to read bill. Try again.');
       setStage('upload');
     }
-  };
+  }
 
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFileSelect(file);
-  };
+  // ── Save bill ────────────────────────────────────────────────────────────────
+  function saveBill() {
+    if (!extractedVendorId) { toast.error('Please select a vendor'); return; }
+    if (!extractedCustomer.trim()) { toast.error('Customer name is required'); return; }
+    if (amount <= 0) { toast.error('Bill amount must be greater than 0'); return; }
+    if (!extractedDate) { toast.error('Please enter the bill date'); return; }
 
-  const triggerFilePicker = () => {
-    if (!state.claudeApiKey) { setShowApiKeySheet(true); return; }
-    fileInputRef.current?.click();
-  };
-
-  const saveApiKey = () => {
-    if (!apiKeyInput.trim()) { toast.error('Please enter your API key'); return; }
-    setClaudeApiKey(apiKeyInput.trim());
-    setShowApiKeySheet(false);
-    toast.success('API key saved!');
-    // Auto-trigger file picker after key saved
-    setTimeout(() => fileInputRef.current?.click(), 300);
-  };
-
-  const saveBill = () => {
-    if (!extractedVendorId || !extractedCustomer || amount <= 0) {
-      toast.error('Please fill all required fields');
-      return;
-    }
     addBill({
       vendorId: extractedVendorId,
-      customerName: extractedCustomer,
+      customerName: extractedCustomer.trim(),
       amount,
       date: extractedDate,
-      confidence: confidence.amount === 'high' && confidence.vendor === 'high' ? 'high' : 'medium',
+      confidence: confidence.amount,
+      notes: vendorHint ? `Issuer: ${vendorHint}` : undefined,
     });
-    toast.success('Bill saved successfully!');
+
+    toast.success(`Bill saved! Your cut: ${formatCurrency(Math.round(cut))} 🎉`);
     setStage('upload');
+    setFileName('');
+    setExtractedDate('');
+    setExtractedVendorId('');
     setExtractedCustomer('');
     setExtractedAmount('');
     setActiveTab('home');
+  }
+
+  // ── Confidence badge ──────────────────────────────────────────────────────────
+  const ConfBadge = ({ level }: { level: Confidence }) => {
+    if (level === 'high') return <CheckCircle2 style={{ width: 16, height: 16, color: '#5C9A6F' }} />;
+    if (level === 'medium') return <AlertTriangle style={{ width: 16, height: 16, color: '#D4A853' }} />;
+    return <AlertTriangle style={{ width: 16, height: 16, color: '#C45C4A' }} />;
   };
 
-  const ConfidenceIcon = ({ level }: { level: string }) => {
-    if (level === 'high') return <CheckCircle2 className="w-4 h-4 text-[#5C9A6F]" />;
-    if (level === 'medium') return <AlertTriangle className="w-4 h-4 text-[#D4A853]" />;
-    return <AlertTriangle className="w-4 h-4 text-[#C45C4A]" />;
-  };
+  const hasApiKey = !!state.claudeApiKey;
 
   return (
-    <div className="px-5 pt-6 pb-5">
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,image/jpeg,image/png,image/jpg"
-        className="hidden"
-        onChange={handleFileInputChange}
-      />
-
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-[#1A1816] mb-1" style={{ fontSize: 22, fontWeight: 700 }}>Upload Bill</h2>
-            <p className="text-[#8B8579]" style={{ fontSize: 15 }}>AI extracts details automatically</p>
-          </div>
-          {/* API Key indicator */}
-          <button
-            onClick={() => { setApiKeyInput(state.claudeApiKey); setShowApiKeySheet(true); }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all"
-            style={{
-              background: state.claudeApiKey ? '#EEF5F0' : '#FDF5F0',
-              border: `1px solid ${state.claudeApiKey ? 'rgba(92,154,111,0.2)' : 'rgba(217,119,87,0.2)'}`,
-            }}
-          >
-            <KeyRound className="w-3.5 h-3.5" style={{ color: state.claudeApiKey ? '#5C9A6F' : '#D97757' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: state.claudeApiKey ? '#5C9A6F' : '#D97757' }}>
-              {state.claudeApiKey ? 'AI Ready' : 'Set API Key'}
-            </span>
-          </button>
+    <div style={{ padding: '24px 20px 100px' }}>
+      {/* Header */}
+      <div style={{ marginBottom: 24, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1A1816', margin: '0 0 4px' }}>Upload Bill</h2>
+          <p style={{ fontSize: 15, color: '#8B8579', margin: 0 }}>
+            {hasApiKey ? 'Tap to scan a bill with AI' : 'Set your API key to enable scanning'}
+          </p>
         </div>
+        {/* API Key button */}
+        <button
+          onClick={() => setShowApiSheet(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 12px', borderRadius: 12, border: 'none', cursor: 'pointer',
+            background: hasApiKey ? '#EEF5F0' : '#FDF5F0',
+            color: hasApiKey ? '#5C9A6F' : '#D97757',
+            fontSize: 13, fontWeight: 600,
+          }}
+        >
+          <Key style={{ width: 14, height: 14 }} />
+          {hasApiKey ? 'API ✓' : 'Set API Key'}
+        </button>
       </div>
 
+      {/* Hidden file inputs */}
+      <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"
+        style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
+        style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+
       <AnimatePresence mode="wait">
-        {/* ---- UPLOAD STAGE ---- */}
+
+        {/* ── UPLOAD STAGE ── */}
         {stage === 'upload' && (
           <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+
+            {/* Main drop area */}
             <button
-              onClick={triggerFilePicker}
-              className="w-full py-20 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-3 mb-6 transition-all active:scale-[0.99]"
-              style={{ borderColor: '#D97757' + '40', background: '#FDF5F0' }}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                width: '100%', padding: '64px 0', borderRadius: 20,
+                border: `2px dashed ${hasApiKey ? '#D97757' : '#E8E2D9'}`,
+                background: hasApiKey ? '#FDF5F0' : '#F9F7F4',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+                cursor: 'pointer',
+              }}
             >
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: '#D97757' + '15' }}>
-                <CloudUpload className="w-7 h-7 text-[#D97757]" />
+              <div style={{ width: 64, height: 64, borderRadius: 18, background: hasApiKey ? 'rgba(217,119,87,0.12)' : '#F0EBE3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CloudUpload style={{ width: 28, height: 28, color: hasApiKey ? '#D97757' : '#ADA79F' }} />
               </div>
-              <p className="text-[#1A1816]" style={{ fontSize: 17, fontWeight: 600 }}>Tap to upload PDF</p>
-              <p className="text-[#8B8579]" style={{ fontSize: 14 }}>PDF, JPG, PNG supported</p>
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: 17, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>
+                  {hasApiKey ? 'Tap to upload PDF or photo' : 'Set API key to start scanning'}
+                </p>
+                <p style={{ fontSize: 14, color: '#8B8579', margin: 0 }}>Supports PDF, JPG, PNG</p>
+              </div>
             </button>
 
-            <div className="flex items-center gap-3 mb-6">
-              <div className="flex-1 h-px bg-[#E8E2D9]" />
-              <span className="text-[#C4BFB6]" style={{ fontSize: 14, fontWeight: 500 }}>OR</span>
-              <div className="flex-1 h-px bg-[#E8E2D9]" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
+              <div style={{ flex: 1, height: 1, background: '#E8E2D9' }} />
+              <span style={{ fontSize: 13, color: '#C4BFB6', fontWeight: 500 }}>OR</span>
+              <div style={{ flex: 1, height: 1, background: '#E8E2D9' }} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            {/* Files + Camera */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               {[
-                { icon: FolderOpen, label: 'Browse Files', color: '#D97757', bg: '#FDF5F0', onClick: triggerFilePicker },
-                { icon: Camera, label: 'Camera Scan', color: '#5C9A6F', bg: '#EEF5F0', onClick: triggerFilePicker },
+                { label: 'Choose File', sublabel: 'PDF or image', icon: FolderOpen, color: '#D97757', bg: '#FDF5F0', action: () => fileInputRef.current?.click() },
+                { label: 'Camera', sublabel: 'Photo of bill', icon: Camera, color: '#5C9A6F', bg: '#EEF5F0', action: () => cameraInputRef.current?.click() },
               ].map(item => (
-                <button
-                  key={item.label}
-                  onClick={item.onClick}
-                  className="flex flex-col items-center gap-2.5 rounded-xl py-6 transition-all active:scale-[0.98]"
-                  style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
-                >
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: item.bg }}>
-                    <item.icon className="w-5 h-5" style={{ color: item.color }} />
+                <button key={item.label} onClick={item.action}
+                  style={{
+                    padding: '20px 0', borderRadius: 16, background: '#FFFFFF',
+                    boxShadow: '0 1px 3px rgba(26,24,22,0.06)', border: 'none', cursor: 'pointer',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+                  }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <item.icon style={{ width: 20, height: 20, color: item.color }} />
                   </div>
-                  <span className="text-[#6B6560]" style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{item.label}</p>
+                    <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>{item.sublabel}</p>
+                  </div>
                 </button>
               ))}
             </div>
 
-            {!state.claudeApiKey && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-5 rounded-xl p-4 flex items-start gap-3"
-                style={{ background: '#FDF5F0', border: '1px solid rgba(217,119,87,0.2)' }}
-              >
-                <KeyRound className="w-5 h-5 text-[#D97757] flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[#1A1816]" style={{ fontSize: 14, fontWeight: 600 }}>Claude API key required</p>
-                  <p className="text-[#8B8579] mt-0.5" style={{ fontSize: 13 }}>Add your key to enable AI extraction from PDFs</p>
-                  <button
-                    onClick={() => { setApiKeyInput(''); setShowApiKeySheet(true); }}
-                    className="mt-2 text-[#D97757]"
-                    style={{ fontSize: 13, fontWeight: 600 }}
-                  >
-                    Add API Key →
-                  </button>
-                </div>
-              </motion.div>
+            {/* Info box */}
+            {hasApiKey && (
+              <div style={{ marginTop: 20, padding: '14px 16px', borderRadius: 14, background: '#F5F0EB', border: '1px solid #E8E2D9' }}>
+                <p style={{ fontSize: 13, color: '#6B6560', margin: 0, lineHeight: 1.5 }}>
+                  💡 <strong>How it works:</strong> Upload any bill PDF or photo → AI reads customer name, amount & date → Review → Save. Your cut is calculated instantly.
+                </p>
+              </div>
             )}
           </motion.div>
         )}
 
-        {/* ---- PROCESSING STAGE ---- */}
+        {/* ── PROCESSING STAGE ── */}
         {stage === 'processing' && (
-          <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center py-24">
-            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }} className="mb-6">
-              <Loader2 className="w-12 h-12 text-[#D97757]" />
+          <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingBottom: 80 }}>
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }} style={{ marginBottom: 24 }}>
+              <Loader2 style={{ width: 52, height: 52, color: '#D97757' }} />
             </motion.div>
-            <p className="text-[#1A1816] mb-1" style={{ fontSize: 20, fontWeight: 600 }}>Reading your bill...</p>
-            <p className="text-[#8B8579]" style={{ fontSize: 15 }}>{processingStatus}</p>
-            <div className="flex gap-1.5 mt-5">
-              {[0, 1, 2].map(i => (
-                <motion.div
-                  key={i}
-                  className="w-2.5 h-2.5 rounded-full bg-[#D97757]"
+            <p style={{ fontSize: 20, fontWeight: 600, color: '#1A1816', margin: '0 0 8px' }}>Reading your bill...</p>
+            <p style={{ fontSize: 15, color: '#8B8579', margin: '0 0 8px' }}>AI is scanning and extracting details</p>
+            {fileName && <p style={{ fontSize: 13, color: '#C4BFB6', margin: 0 }}>{fileName}</p>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+              {[0,1,2].map(i => (
+                <motion.div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: '#D97757' }}
                   animate={{ opacity: [0.2, 1, 0.2] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.3 }}
-                />
+                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.3 }} />
               ))}
             </div>
           </motion.div>
         )}
 
-        {/* ---- REVIEW STAGE ---- */}
+        {/* ── REVIEW STAGE ── */}
         {stage === 'review' && (
           <motion.div key="review" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="rounded-2xl p-4 mb-4 flex items-center gap-3" style={{ background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.15)' }}>
-              <CheckCircle2 className="w-5 h-5 text-[#5C9A6F] flex-shrink-0" />
-              <div>
-                <p className="text-[#1A1816]" style={{ fontSize: 14, fontWeight: 600 }}>AI extraction complete</p>
-                <p className="text-[#6B6560]" style={{ fontSize: 13 }}>Review and correct any field before saving</p>
+
+            {/* File badge */}
+            <div style={{ padding: '12px 14px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 40, height: 48, borderRadius: 8, background: '#F5F0EB', border: '1px solid #E8E2D9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#8B8579' }}>PDF</span>
               </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 15, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{fileName || 'Bill scanned'}</p>
+                {vendorHint && <p style={{ fontSize: 13, color: '#8B8579', margin: 0 }}>Issued by: {vendorHint}</p>}
+              </div>
+              <CheckCircle2 style={{ width: 20, height: 20, color: '#5C9A6F' }} />
             </div>
 
-            <div className="space-y-3 mb-4">
+            <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 12px', fontWeight: 500 }}>
+              Review extracted details — tap any field to edit
+            </p>
+
+            {/* Fields */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
               {/* Date */}
-              <div className="rounded-xl p-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[#8B8579]" style={{ fontSize: 14, fontWeight: 500 }}>Date</label>
-                  <ConfidenceIcon level={confidence.date} />
+              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Invoice Date</label>
+                  <ConfBadge level={confidence.date} />
                 </div>
-                <input
-                  type="date"
-                  value={extractedDate}
-                  onChange={e => setExtractedDate(e.target.value)}
-                  className="w-full text-[#1A1816] bg-transparent outline-none"
-                  style={{ fontSize: 17, fontWeight: 500 }}
-                />
+                <input type="date" value={extractedDate} onChange={e => setExtractedDate(e.target.value)}
+                  style={{ width: '100%', fontSize: 17, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
               </div>
 
               {/* Vendor */}
-              <div className="rounded-xl p-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[#8B8579]" style={{ fontSize: 14, fontWeight: 500 }}>Vendor</label>
-                  <ConfidenceIcon level={confidence.vendor} />
+              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Vendor (who pays your cut)</label>
+                  {selectedVendor
+                    ? <CheckCircle2 style={{ width: 16, height: 16, color: '#5C9A6F' }} />
+                    : <AlertTriangle style={{ width: 16, height: 16, color: '#D4A853' }} />}
                 </div>
-                <select
-                  value={extractedVendorId}
-                  onChange={e => setExtractedVendorId(e.target.value)}
-                  className="w-full text-[#1A1816] bg-transparent outline-none"
-                  style={{ fontSize: 17, fontWeight: 500 }}
-                >
-                  <option value="">Select vendor</option>
-                  {state.vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </select>
+                {state.vendors.length > 0 ? (
+                  <select value={extractedVendorId} onChange={e => setExtractedVendorId(e.target.value)}
+                    style={{ width: '100%', fontSize: 17, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }}>
+                    <option value="">— Select vendor —</option>
+                    {state.vendors.map(v => <option key={v.id} value={v.id}>{v.name} ({v.cutPercent}%)</option>)}
+                  </select>
+                ) : (
+                  <p style={{ fontSize: 15, color: '#C45C4A', margin: 0 }}>No vendors yet — add one in Settings first</p>
+                )}
               </div>
 
               {/* Customer */}
-              <div className="rounded-xl p-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[#8B8579]" style={{ fontSize: 14, fontWeight: 500 }}>Customer</label>
-                  <ConfidenceIcon level={confidence.customer} />
+              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Customer (billed to)</label>
+                  <ConfBadge level={confidence.customerName} />
                 </div>
-                <input
-                  value={extractedCustomer}
-                  onChange={e => setExtractedCustomer(e.target.value)}
-                  className="w-full text-[#1A1816] bg-transparent outline-none"
+                <input value={extractedCustomer} onChange={e => setExtractedCustomer(e.target.value)}
                   placeholder="Customer name"
-                  style={{ fontSize: 17, fontWeight: 500 }}
-                />
+                  style={{ width: '100%', fontSize: 17, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
               </div>
 
               {/* Amount */}
-              <div className="rounded-xl p-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[#8B8579]" style={{ fontSize: 14, fontWeight: 500 }}>Bill Amount</label>
-                  <ConfidenceIcon level={confidence.amount} />
+              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Net Amount (total bill)</label>
+                  <ConfBadge level={confidence.amount} />
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[#8B8579]" style={{ fontSize: 20 }}>₹</span>
-                  <input
-                    type="number"
-                    value={extractedAmount}
-                    onChange={e => setExtractedAmount(e.target.value)}
-                    className="flex-1 text-[#1A1816] bg-transparent outline-none"
-                    placeholder="0"
-                    style={{ fontSize: 26, fontWeight: 700 }}
-                  />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 22, color: '#8B8579' }}>₹</span>
+                  <input type="number" value={extractedAmount} onChange={e => setExtractedAmount(e.target.value)}
+                    style={{ flex: 1, fontSize: 26, fontWeight: 700, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
                 </div>
               </div>
             </div>
 
-            {/* Earnings preview */}
+            {/* Your cut preview */}
             {selectedVendor && amount > 0 && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.97 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="mb-5 rounded-xl p-4"
-                style={{ background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)' }}
+                initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
+                style={{ marginTop: 14, padding: '16px 18px', borderRadius: 14, background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)' }}
               >
-                <p className="text-[#6B6560]" style={{ fontSize: 13 }}>Your commission ({selectedVendor.cutPercent}%)</p>
-                <p className="text-[#5C9A6F]" style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>
-                  {formatCurrency(Math.round(cut))}
-                </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontSize: 13, color: '#5C9A6F', margin: '0 0 2px', fontWeight: 500 }}>
+                      {selectedVendor.cutPercent}% cut from {selectedVendor.name}
+                    </p>
+                    <p style={{ fontSize: 11, color: '#8B8579', margin: 0 }}>
+                      ₹{amount.toLocaleString('en-IN')} × {selectedVendor.cutPercent}%
+                    </p>
+                  </div>
+                  <p style={{ fontSize: 22, fontWeight: 700, color: '#5C9A6F', margin: 0 }}>
+                    {formatCurrency(Math.round(cut))}
+                  </p>
+                </div>
               </motion.div>
             )}
 
-            <div className="space-y-3">
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={saveBill}
-                className="w-full py-4 rounded-xl text-white"
+            {/* Action buttons */}
+            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={saveBill}
                 style={{
+                  width: '100%', padding: '16px 0', borderRadius: 16, color: '#FFFFFF', border: 'none', cursor: 'pointer',
                   background: 'linear-gradient(135deg, #5C9A6F, #4A8A5D)',
-                  fontSize: 17,
-                  fontWeight: 600,
-                  boxShadow: '0 4px 14px rgba(92,154,111,0.3)',
-                }}
-              >
-                Save Bill
+                  fontSize: 17, fontWeight: 600, boxShadow: '0 4px 14px rgba(92,154,111,0.3)',
+                }}>
+                Save Bill ✓
               </motion.button>
-              <button
-                onClick={() => setStage('upload')}
-                className="w-full py-4 rounded-xl text-[#6B6560]"
-                style={{ fontSize: 16, fontWeight: 500, border: '1px solid #E8E2D9' }}
-              >
+              <button onClick={() => { setStage('upload'); setFileName(''); }}
+                style={{ width: '100%', padding: '14px 0', borderRadius: 16, color: '#6B6560', background: 'transparent', border: '1px solid #E8E2D9', fontSize: 15, fontWeight: 500, cursor: 'pointer' }}>
                 Upload Different Bill
               </button>
             </div>
           </motion.div>
         )}
+
       </AnimatePresence>
 
-      {/* API Key Bottom Sheet */}
+      {/* ── API KEY BOTTOM SHEET ─────────────────────────────────────────── */}
       <AnimatePresence>
-        {showApiKeySheet && (
+        {showApiSheet && (
           <>
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50"
-              onClick={() => setShowApiKeySheet(false)}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowApiSheet(false)}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }}
             />
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 rounded-t-2xl z-50"
-              style={{ background: '#FFFFFF', boxShadow: '0 -4px 20px rgba(26,24,22,0.08)' }}
-            >
-              <div className="flex justify-center pt-3 pb-1">
-                <div className="w-10 h-1 rounded-full bg-[#E8E2D9]" />
-              </div>
-              <div className="px-6 pb-8">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-[#1A1816]" style={{ fontSize: 20, fontWeight: 700 }}>Claude API Key</h3>
-                  <button onClick={() => setShowApiKeySheet(false)} className="p-1.5">
-                    <X className="w-5 h-5 text-[#8B8579]" />
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+              <motion.div
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                style={{
+                  width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0',
+                  background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
+                  padding: '20px 24px 40px', pointerEvents: 'all',
+                }}
+              >
+                {/* Handle bar */}
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 20px' }} />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <h3 style={{ fontSize: 20, fontWeight: 700, color: '#1A1816', margin: 0 }}>Claude API Key</h3>
+                  <button onClick={() => setShowApiSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <X style={{ width: 20, height: 20, color: '#8B8579' }} />
                   </button>
                 </div>
-                <p className="text-[#8B8579] mb-5" style={{ fontSize: 14 }}>
-                  Required for AI-powered PDF extraction. Get your key at{' '}
-                  <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-[#D97757] font-medium">
-                    console.anthropic.com
-                  </a>
+                <p style={{ fontSize: 14, color: '#8B8579', margin: '0 0 20px', lineHeight: 1.5 }}>
+                  Required for AI bill scanning. Your key is saved only on this device.
                 </p>
 
-                <div className="relative mb-5">
-                  <input
-                    type="password"
-                    value={apiKeyInput}
-                    onChange={e => setApiKeyInput(e.target.value)}
-                    placeholder="sk-ant-api03-..."
-                    className="w-full px-4 py-3.5 rounded-xl text-[#1A1816] outline-none focus:ring-2 focus:ring-[#D97757]/20"
-                    style={{ fontSize: 15, background: '#F5F0EB', border: '1px solid #E8E2D9', fontFamily: 'monospace' }}
-                  />
-                </div>
-
-                <div className="rounded-xl p-3.5 mb-5" style={{ background: '#FDF5F0', border: '1px solid rgba(217,119,87,0.15)' }}>
-                  <p className="text-[#8B8579]" style={{ fontSize: 13 }}>
-                    🔒 Your key is stored locally on this device only and never sent anywhere except directly to Anthropic's API.
+                {/* Step guide */}
+                <div style={{ padding: '14px 16px', borderRadius: 12, background: '#F5F0EB', marginBottom: 16 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6560', margin: '0 0 8px' }}>How to get your API key:</p>
+                  {[
+                    '1. Open console.anthropic.com on your laptop',
+                    '2. Sign up (free) or log in',
+                    '3. Click "API Keys" → "Create Key"',
+                    '4. Copy the key starting with sk-ant-...',
+                    '5. Paste it below and tap Save',
+                  ].map((step, i) => (
+                    <p key={i} style={{ fontSize: 13, color: '#6B6560', margin: '0 0 4px', lineHeight: 1.5 }}>{step}</p>
+                  ))}
+                  <p style={{ fontSize: 12, color: '#ADA79F', margin: '8px 0 0', lineHeight: 1.4 }}>
+                    Free tier gives $5 credit (~500 bills). Each scan costs ~$0.01.
                   </p>
                 </div>
 
-                <motion.button
-                  whileTap={{ scale: 0.98 }}
-                  onClick={saveApiKey}
-                  className="w-full py-4 rounded-xl text-white"
-                  style={{
-                    background: 'linear-gradient(135deg, #D97757, #C4613C)',
-                    fontSize: 16,
-                    fontWeight: 600,
-                    boxShadow: '0 4px 14px rgba(217,119,87,0.3)',
-                  }}
-                >
-                  Save & Continue
-                </motion.button>
-              </div>
-            </motion.div>
+                {/* Input */}
+                <div style={{ position: 'relative', marginBottom: 14 }}>
+                  <input
+                    type={showKeyText ? 'text' : 'password'}
+                    value={tempApiKey || state.claudeApiKey}
+                    onChange={e => setTempApiKey(e.target.value)}
+                    placeholder="sk-ant-api03-..."
+                    style={{
+                      width: '100%', padding: '14px 44px 14px 16px', borderRadius: 12, fontSize: 15,
+                      background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none',
+                      color: '#1A1816', boxSizing: 'border-box', fontFamily: 'monospace',
+                    }}
+                  />
+                  <button onClick={() => setShowKeyText(s => !s)}
+                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                    {showKeyText
+                      ? <EyeOff style={{ width: 18, height: 18, color: '#8B8579' }} />
+                      : <Eye style={{ width: 18, height: 18, color: '#8B8579' }} />}
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <motion.button whileTap={{ scale: 0.97 }}
+                    onClick={() => {
+                      const key = (tempApiKey || state.claudeApiKey).trim();
+                      if (!key.startsWith('sk-ant')) { toast.error('Invalid key format'); return; }
+                      setClaudeApiKey(key);
+                      setTempApiKey('');
+                      setShowApiSheet(false);
+                      toast.success('API key saved! Ready to scan bills.');
+                    }}
+                    style={{
+                      flex: 1, padding: '14px 0', borderRadius: 14, color: '#FFFFFF', border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 16, fontWeight: 600,
+                    }}>
+                    Save Key
+                  </motion.button>
+                  {state.claudeApiKey && (
+                    <button
+                      onClick={() => { setClaudeApiKey(''); setTempApiKey(''); setShowApiSheet(false); toast.success('API key removed'); }}
+                      style={{ padding: '14px 16px', borderRadius: 14, color: '#C45C4A', background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            </div>
           </>
         )}
       </AnimatePresence>
