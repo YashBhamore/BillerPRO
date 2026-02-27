@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
-import { Pencil, Trash2, Plus, Download, Moon, Sun, Monitor, Bell, ChevronRight, X, Shield, LogOut } from 'lucide-react';
+import { Pencil, Trash2, Plus, Download, Moon, Sun, Monitor, Bell, ChevronRight, X, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
+import { exportToCSV, exportMonthToCSV } from '../store';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
@@ -11,7 +12,7 @@ function formatCurrency(val: number) {
 export function SettingsScreen() {
   const {
     state, setUserProfile, setMonthlyTarget,
-    addVendor, updateVendor, deleteVendor, logout, setTheme, downloadBillsCsv,
+    addVendor, updateVendor, deleteVendor, logout, setTheme,
   } = useApp();
 
   const [showVendorSheet, setShowVendorSheet] = useState(false);
@@ -22,6 +23,7 @@ export function SettingsScreen() {
   const [targetValue, setTargetValue] = useState(String(state.monthlyTarget));
   const [editingField, setEditingField] = useState<string | null>(null);
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState({
     billReminder: true,
     targetAlerts: true,
@@ -60,11 +62,6 @@ export function SettingsScreen() {
     setMonthlyTarget(parseInt(targetValue) || 0);
     setEditingTarget(false);
     toast.success('Target updated');
-  };
-
-  const handleExport = (scope: 'all' | 'month') => {
-    const filename = downloadBillsCsv(scope);
-    toast.success(`Downloaded ${filename}`);
   };
 
   return (
@@ -139,9 +136,26 @@ export function SettingsScreen() {
               <button onClick={() => openEditVendor(v.id)} className="p-1.5 rounded-lg hover:bg-[#F5F0EB]">
                 <Pencil className="w-4 h-4 text-[#8B8579]" />
               </button>
-              <button onClick={() => { deleteVendor(v.id); toast.success('Deleted'); }} className="p-1.5 rounded-lg hover:bg-[#FBF0EE]">
-                <Trash2 className="w-4 h-4 text-[#C45C4A]/50" />
-              </button>
+              {confirmDeleteId === v.id ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => { deleteVendor(v.id); setConfirmDeleteId(null); toast.success('Vendor deleted'); }}
+                    className="px-2.5 py-1 rounded-lg text-white text-xs font-semibold"
+                    style={{ background: '#C45C4A', fontSize: 12 }}>
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold"
+                    style={{ background: '#F0EBE3', color: '#6B6560', fontSize: 12 }}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmDeleteId(v.id)} className="p-1.5 rounded-lg hover:bg-[#FBF0EE]">
+                  <Trash2 className="w-4 h-4 text-[#C45C4A]/50" />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -179,19 +193,30 @@ export function SettingsScreen() {
       <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
         <p className="text-[#8B8579] mb-3" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>DATA & EXPORT</p>
         {[
-          { label: 'Export to Excel (.csv)', scope: 'all' as const },
-          { label: "Export this month's data", scope: 'month' as const },
-          { label: 'Export all data', scope: 'all' as const },
+          { label: "Export this month", sub: "Current month as CSV file", action: () => {
+            const mb = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
+            if (!mb.length) { toast.error('No bills this month'); return; }
+            exportMonthToCSV(state.bills, state.vendors, state.selectedMonth);
+            toast.success(`Exported ${mb.length} bills!`);
+          }},
+          { label: "Export all data", sub: "All bills — opens in Excel/Sheets", action: () => {
+            if (!state.bills.length) { toast.error('No bills to export yet'); return; }
+            exportToCSV(state.bills, state.vendors);
+            toast.success(`Exported ${state.bills.length} bills!`);
+          }},
         ].map(item => (
           <button
             key={item.label}
-            onClick={() => handleExport(item.scope)}
+            onClick={item.action}
             className="w-full flex items-center justify-between py-3.5 last:border-0 transition-all hover:bg-[#F5F0EB] rounded-lg px-1"
             style={{ borderBottom: '1px solid #F0EBE3' }}
           >
             <div className="flex items-center gap-3">
-              <Download className="w-[18px] h-[18px] text-[#8B8579]" />
-              <span className="text-[#1A1816]" style={{ fontSize: 16 }}>{item.label}</span>
+              <Download className="w-[18px] h-[18px] text-[#5C9A6F]" />
+              <div className="text-left">
+                <p className="text-[#1A1816]" style={{ fontSize: 16 }}>{item.label}</p>
+                <p className="text-[#8B8579]" style={{ fontSize: 12 }}>{item.sub}</p>
+              </div>
             </div>
             <ChevronRight className="w-[18px] h-[18px] text-[#C4BFB6]" />
           </button>
@@ -250,13 +275,7 @@ export function SettingsScreen() {
           <span className="text-[#1A1816]" style={{ fontSize: 16 }}>Currency</span>
           <span className="text-[#6B6560]" style={{ fontSize: 16 }}>₹ INR</span>
         </div>
-        <div className="flex items-center justify-between py-3.5" style={{ borderBottom: '1px solid #F0EBE3' }}>
-          <div className="flex items-center gap-2">
-            <Shield className="w-[18px] h-[18px] text-[#8B8579]" />
-            <span className="text-[#1A1816]" style={{ fontSize: 16 }}>Security</span>
-          </div>
-          <ChevronRight className="w-[18px] h-[18px] text-[#C4BFB6]" />
-        </div>
+
       </div>
 
       {/* Logout & Danger */}

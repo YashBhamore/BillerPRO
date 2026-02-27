@@ -22,7 +22,6 @@ export interface UserProfile {
   name: string;
   email: string;
   businessName: string;
-  avatar?: string;
 }
 
 export interface AppState {
@@ -39,40 +38,45 @@ export interface AppState {
 
 const VENDOR_COLORS = ['#D97757', '#5C9A6F', '#D4A853', '#C45C4A', '#9B7E6B', '#7BA5B5', '#B57D52', '#6B8F71'];
 const STORAGE_KEY = 'billerpro_state';
+const STORAGE_VERSION = 'v2'; // bump this to wipe old cached data
+
+// Wipe old data if version mismatch (clears fake demo data from old builds)
+if (localStorage.getItem('billerpro_version') !== STORAGE_VERSION) {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.setItem('billerpro_version', STORAGE_VERSION);
+}
 
 function getVendorColor(index: number) {
   return VENDOR_COLORS[index % VENDOR_COLORS.length];
 }
 
-const defaultVendors: Vendor[] = [];
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
-const defaultBills: Bill[] = [];
-
+// Fresh empty state — no demo data
 const defaultState: AppState = {
   isLoggedIn: false,
   user: { name: '', email: '', businessName: '' },
-  vendors: defaultVendors,
-  bills: defaultBills,
-  monthlyTarget: 20000,
-  selectedMonth: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+  vendors: [],
+  bills: [],
+  monthlyTarget: 0,
+  selectedMonth: currentMonth(),
   theme: 'light',
   activeTab: 'home',
   claudeApiKey: '',
 };
 
-// Load persisted state from localStorage, merging with defaults
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState;
     const saved = JSON.parse(raw);
-    // Merge saved state with defaults so new fields always exist
     return {
       ...defaultState,
       ...saved,
-      // Always start logged out for security
       isLoggedIn: false,
-      // Preserve active tab only as 'home' on reload
       activeTab: 'home',
     };
   } catch {
@@ -80,7 +84,6 @@ function loadState(): AppState {
   }
 }
 
-// Fields we want to persist (exclude volatile UI state)
 function pickPersistable(state: AppState) {
   return {
     user: state.user,
@@ -93,22 +96,58 @@ function pickPersistable(state: AppState) {
   };
 }
 
-function csvEscape(value: string | number) {
-  const text = String(value ?? '');
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
+// ─── REAL EXPORT FUNCTIONS ───────────────────────────────────────────────────
 
-function triggerCsvDownload(filename: string, csv: string) {
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+export function exportToCSV(bills: Bill[], vendors: Vendor[]) {
+  const getVendor = (id: string) => vendors.find(v => v.id === id);
+
+  const headers = ['Date', 'Vendor', 'Customer', 'Bill Amount (₹)', 'Cut %', 'Your Earnings (₹)'];
+  const rows = bills
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map(b => {
+      const v = getVendor(b.vendorId);
+      const cut = v ? b.amount * v.cutPercent / 100 : 0;
+      return [
+        b.date,
+        v?.name || '',
+        b.customerName,
+        b.amount.toString(),
+        v ? `${v.cutPercent}%` : '',
+        Math.round(cut).toString(),
+      ];
+    });
+
+  // Add summary rows
+  const totalBills = bills.reduce((s, b) => s + b.amount, 0);
+  const totalEarnings = bills.reduce((s, b) => {
+    const v = getVendor(b.vendorId);
+    return s + (v ? b.amount * v.cutPercent / 100 : 0);
+  }, 0);
+
+  rows.push([]);
+  rows.push(['TOTAL', '', '', totalBills.toString(), '', Math.round(totalEarnings).toString()]);
+
+  const csv = [headers, ...rows]
+    .map(row => row.map(cell => `"${cell}"`).join(','))
+    .join('\n');
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `BillerPRO_export_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+export function exportMonthToCSV(bills: Bill[], vendors: Vendor[], month: string) {
+  const monthBills = bills.filter(b => b.date.startsWith(month));
+  exportToCSV(monthBills, vendors);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface AppContextType {
   state: AppState;
@@ -125,7 +164,6 @@ interface AppContextType {
   setUserProfile: (profile: Partial<UserProfile>) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setClaudeApiKey: (key: string) => void;
-  downloadBillsCsv: (scope: 'month' | 'all') => string;
   getVendor: (id: string) => Vendor | undefined;
   getBillsForMonth: (month: string) => Bill[];
   getEarningsForMonth: (month: string) => number;
@@ -137,16 +175,13 @@ const AppContext = createContext<AppContextType | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(loadState);
 
-  // Persist to localStorage whenever relevant state changes
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(pickPersistable(state)));
-    } catch {
-      // Silently fail if storage is full
-    }
+    } catch {}
   }, [state.user, state.vendors, state.bills, state.monthlyTarget, state.selectedMonth, state.theme, state.claudeApiKey]);
 
-  const login = useCallback((email: string, _password: string) => {
+  const login = useCallback((_email: string, _password: string) => {
     setState(s => ({ ...s, isLoggedIn: true }));
     return true;
   }, []);
@@ -180,11 +215,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteVendor = useCallback((id: string) => {
-    setState(s => ({
-      ...s,
-      vendors: s.vendors.filter(v => v.id !== id),
-      bills: s.bills.filter(b => b.vendorId !== id),
-    }));
+    setState(s => ({ ...s, vendors: s.vendors.filter(v => v.id !== id) }));
   }, []);
 
   const addBill = useCallback((bill: Omit<Bill, 'id'>) => {
@@ -218,46 +249,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(s => ({ ...s, claudeApiKey: key }));
   }, []);
 
-  const downloadBillsCsv = useCallback((scope: 'month' | 'all') => {
-    const sourceBills = scope === 'month'
-      ? state.bills.filter(b => b.date.startsWith(state.selectedMonth))
-      : state.bills;
-
-    const rows: (string | number)[][] = [
-      ['Date', 'Vendor', 'Customer', 'Amount', 'Cut %', 'Earnings', 'Confidence', 'Notes'],
-      ...sourceBills.map(b => {
-        const vendor = state.vendors.find(v => v.id === b.vendorId);
-        const cutPercent = vendor?.cutPercent ?? 0;
-        const earnings = Math.round(((b.amount * cutPercent) / 100) * 100) / 100;
-        return [
-          b.date,
-          vendor?.name ?? 'Unknown Vendor',
-          b.customerName,
-          b.amount,
-          cutPercent,
-          earnings,
-          b.confidence,
-          b.notes ?? '',
-        ];
-      }),
-    ];
-
-    const totalAmount = sourceBills.reduce((sum, b) => sum + b.amount, 0);
-    const totalEarnings = sourceBills.reduce((sum, b) => {
-      const vendor = state.vendors.find(v => v.id === b.vendorId);
-      return sum + (vendor ? (b.amount * vendor.cutPercent) / 100 : 0);
-    }, 0);
-
-    rows.push([]);
-    rows.push(['GRAND TOTAL', '', '', totalAmount, '', Math.round(totalEarnings * 100) / 100, '', '']);
-
-    const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n');
-    const scopeLabel = scope === 'month' ? state.selectedMonth : 'all-data';
-    const filename = `billerpro-${scopeLabel}.csv`;
-    triggerCsvDownload(filename, csv);
-    return filename;
-  }, [state.bills, state.selectedMonth, state.vendors]);
-
   const getVendor = useCallback((id: string) => {
     return state.vendors.find(v => v.id === id);
   }, [state.vendors]);
@@ -267,11 +258,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.bills]);
 
   const getEarningsForMonth = useCallback((month: string) => {
-    const bills = state.bills.filter(b => b.date.startsWith(month));
-    return bills.reduce((sum, b) => {
-      const vendor = state.vendors.find(v => v.id === b.vendorId);
-      return sum + (vendor ? b.amount * vendor.cutPercent / 100 : 0);
-    }, 0);
+    return state.bills
+      .filter(b => b.date.startsWith(month))
+      .reduce((sum, b) => {
+        const v = state.vendors.find(v => v.id === b.vendorId);
+        return sum + (v ? b.amount * v.cutPercent / 100 : 0);
+      }, 0);
   }, [state.bills, state.vendors]);
 
   const getTotalBillsForMonth = useCallback((month: string) => {
@@ -282,8 +274,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{
       state, login, logout, setActiveTab, addVendor, updateVendor, deleteVendor,
       addBill, deleteBill, setMonthlyTarget, setSelectedMonth,
-      setUserProfile, setTheme, setClaudeApiKey, downloadBillsCsv, getVendor, getBillsForMonth,
-      getEarningsForMonth, getTotalBillsForMonth,
+      setUserProfile, setTheme, setClaudeApiKey, getVendor,
+      getBillsForMonth, getEarningsForMonth, getTotalBillsForMonth,
     }}>
       {children}
     </AppContext.Provider>

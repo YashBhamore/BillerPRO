@@ -45,7 +45,7 @@ export function LoginPage() {
         localStorage.setItem('billerpro_pin', pin);
         localStorage.setItem('billerpro_username', name);
         setUserProfile({ name, businessName: business || name + "'s Business", email: '' });
-        setTimeout(() => { login('user', 'pin'); toast.success('Welcome, ' + name.split(' ')[0] + '!'); }, 300);
+        setTimeout(() => { login('user', 'pin'); toast.success('Welcome, ' + name.split(' ')[0] + '! 🎉'); }, 300);
       } else {
         setShake(true);
         setTimeout(() => { setShake(false); setConfirmPin(''); }, 600);
@@ -128,7 +128,7 @@ export function LoginPage() {
                   background: 'linear-gradient(135deg, #D97757, #C4613C)',
                   boxShadow: '0 20px 60px rgba(217,119,87,0.4), 0 4px 16px rgba(26,24,22,0.08)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 54,
-                }}>BP</div>
+                }}>📊</div>
 
                 {/* Floating card left */}
                 <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
@@ -284,7 +284,7 @@ export function LoginPage() {
                   boxShadow: '0 12px 32px rgba(217,119,87,0.35)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 42, margin: '0 auto 16px',
-                }}>BP</motion.div>
+                }}>📊</motion.div>
 
               <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
                 style={{ fontSize: 30, fontWeight: 800, color: ACCENT, letterSpacing: '-0.02em', margin: 0 }}>
@@ -293,7 +293,7 @@ export function LoginPage() {
 
               <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
                 style={{ color: '#8B8579', fontSize: 15, marginTop: 6 }}>
-                Welcome back, {savedName.split(' ')[0]}
+                Welcome back, {savedName.split(' ')[0]} 👋
               </motion.p>
 
               <PinDots value={pin} shaking={shake} />

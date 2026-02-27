@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Upload, ScanLine, BarChart3, Settings, Bell } from 'lucide-react';
+import { Home, Upload, ScanLine, BarChart3, Settings } from 'lucide-react';
 import { useApp } from '../store';
 import { HomeDashboard } from './HomeDashboard';
 import { UploadBill } from './UploadBill';
@@ -31,9 +31,27 @@ export function Layout() {
   };
 
   return (
-    <div className="h-full w-full min-h-0 flex flex-col overflow-hidden" style={{ background: '#FAF9F6' }}>
-      {/* Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+    // Use fixed positioning strategy: nav is always at bottom, content fills remaining space
+    <div
+      className="w-full"
+      style={{
+        height: '100dvh', // dynamic viewport height — handles mobile browser chrome
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#FAF9F6',
+        overflow: 'hidden', // prevent outer scroll
+      }}
+    >
+      {/* Scrollable content area — takes all space above nav */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          WebkitOverflowScrolling: 'touch', // smooth iOS scroll
+          minHeight: 0, // critical: allows flex child to shrink below content size
+        }}
+      >
         <AnimatePresence mode="wait">
           <motion.div
             key={state.activeTab}
@@ -41,22 +59,26 @@ export function Layout() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.15 }}
-            className="min-h-full"
           >
             {renderContent()}
           </motion.div>
         </AnimatePresence>
       </div>
 
-      {/* Bottom Tab Bar */}
+      {/* Bottom Tab Bar — always visible, never scrolls away */}
       <nav
-        className="border-t flex items-center justify-around flex-shrink-0 sticky bottom-0 z-10"
         style={{
+          flexShrink: 0,
           height: 64,
-          minHeight: 64,
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           background: '#FFFFFF',
-          borderColor: '#F0EBE3',
+          borderTop: '1px solid #F0EBE3',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-around',
+          // Ensure it stays above everything including modals backdrop
+          position: 'relative',
+          zIndex: 10,
         }}
       >
         {tabs.map(tab => {
@@ -66,20 +88,44 @@ export function Layout() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className="flex flex-col items-center justify-center gap-0.5 flex-1 py-1.5 transition-colors relative"
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                paddingTop: 6,
+                paddingBottom: 6,
+                position: 'relative',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+              }}
             >
               {isActive && (
                 <motion.div
                   layoutId="activeTabIndicator"
-                  className="absolute -top-px left-1/2 -translate-x-1/2 w-10 h-[3px] rounded-full"
-                  style={{ background: '#D97757' }}
+                  style={{
+                    position: 'absolute',
+                    top: -1,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 40,
+                    height: 3,
+                    borderRadius: 9999,
+                    background: '#D97757',
+                  }}
                   transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                 />
               )}
               <Icon
-                className="w-[22px] h-[22px]"
-                strokeWidth={isActive ? 2.2 : 1.6}
-                style={{ color: isActive ? '#D97757' : '#ADA79F' }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  color: isActive ? '#D97757' : '#ADA79F',
+                  strokeWidth: isActive ? 2.2 : 1.6,
+                }}
               />
               <span
                 style={{
