@@ -31,27 +31,22 @@ export function Layout() {
   };
 
   return (
-    // Use fixed positioning strategy: nav is always at bottom, content fills remaining space
-    <div
-      className="w-full"
-      style={{
-        height: '100dvh', // dynamic viewport height — handles mobile browser chrome
-        display: 'flex',
-        flexDirection: 'column',
-        background: '#FAF9F6',
-        overflow: 'hidden', // prevent outer scroll
-      }}
-    >
-      {/* Scrollable content area — takes all space above nav */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          WebkitOverflowScrolling: 'touch', // smooth iOS scroll
-          minHeight: 0, // critical: allows flex child to shrink below content size
-        }}
-      >
+    <div style={{
+      height: '100dvh',
+      width: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      background: 'var(--bg, #FAF9F6)',
+      overflow: 'hidden',
+    }}>
+      {/* Scrollable content */}
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        WebkitOverflowScrolling: 'touch',
+        minHeight: 0,
+      }}>
         <AnimatePresence mode="wait">
           <motion.div
             key={state.activeTab}
@@ -65,22 +60,18 @@ export function Layout() {
         </AnimatePresence>
       </div>
 
-      {/* Bottom Tab Bar — always visible, never scrolls away */}
-      <nav
-        style={{
-          flexShrink: 0,
-          height: 64,
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          background: '#FFFFFF',
-          borderTop: '1px solid #F0EBE3',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-around',
-          // Ensure it stays above everything including modals backdrop
-          position: 'relative',
-          zIndex: 10,
-        }}
-      >
+      {/* Bottom tab bar — always fixed at bottom */}
+      <nav style={{
+        flexShrink: 0,
+        height: 64,
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        background: 'var(--nav-bg, #FFFFFF)',
+        borderTop: '1px solid var(--nav-border, #F0EBE3)',
+        display: 'flex',
+        alignItems: 'stretch',
+        position: 'relative',
+        zIndex: 10,
+      }}>
         {tabs.map(tab => {
           const isActive = state.activeTab === tab.id;
           const Icon = tab.icon;
@@ -94,47 +85,42 @@ export function Layout() {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 2,
-                paddingTop: 6,
-                paddingBottom: 6,
+                gap: 3,
                 position: 'relative',
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
+                padding: '6px 0',
               }}
             >
+              {/* Active indicator — uses CSS not spring animation to avoid offset */}
               {isActive && (
-                <motion.div
-                  layoutId="activeTabIndicator"
-                  style={{
-                    position: 'absolute',
-                    top: -1,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    width: 40,
-                    height: 3,
-                    borderRadius: 9999,
-                    background: '#D97757',
-                  }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                />
+                <div style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  width: 32,
+                  height: 3,
+                  borderRadius: 9999,
+                  background: '#D97757',
+                }} />
               )}
               <Icon
                 style={{
                   width: 22,
                   height: 22,
-                  color: isActive ? '#D97757' : '#ADA79F',
+                  color: isActive ? '#D97757' : 'var(--text-muted, #ADA79F)',
                   strokeWidth: isActive ? 2.2 : 1.6,
+                  flexShrink: 0,
                 }}
               />
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: isActive ? 600 : 400,
-                  color: isActive ? '#D97757' : '#ADA79F',
-                  lineHeight: 1.3,
-                }}
-              >
+              <span style={{
+                fontSize: 11,
+                fontWeight: isActive ? 600 : 400,
+                color: isActive ? '#D97757' : 'var(--text-muted, #ADA79F)',
+                lineHeight: 1,
+              }}>
                 {tab.label}
               </span>
             </button>

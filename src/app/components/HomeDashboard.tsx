@@ -240,8 +240,16 @@ export function HomeDashboard() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 rounded-t-2xl z-50"
-              style={{ background: '#FFFFFF', boxShadow: '0 -4px 20px rgba(26,24,22,0.08)' }}
+              className="fixed rounded-t-2xl z-50"
+              style={{
+                bottom: 0,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: '100%',
+                maxWidth: 430,
+                background: '#FFFFFF',
+                boxShadow: '0 -4px 20px rgba(26,24,22,0.08)',
+              }}
             >
               <div className="flex justify-center pt-3 pb-1">
                 <div className="w-10 h-1 rounded-full bg-[#E8E2D9]" />
@@ -264,6 +272,7 @@ export function HomeDashboard() {
                       placeholder="e.g. Sharma Traders"
                       className="w-full px-4 py-3.5 rounded-xl text-[#1A1816] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10"
                       style={{ fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
+                      inputMode="text"
                     />
                   </div>
                   <div>

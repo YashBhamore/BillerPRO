@@ -312,8 +312,16 @@ export function SettingsScreen() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 rounded-t-3xl z-50"
-              style={{ background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.1)' }}
+              className="fixed rounded-t-3xl z-50"
+              style={{
+                bottom: 0,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: '100%',
+                maxWidth: 430,
+                background: '#FFFFFF',
+                boxShadow: '0 -8px 30px rgba(26,24,22,0.1)',
+              }}
             >
               <div className="flex justify-center pt-3 pb-1">
                 <div className="w-10 h-1 rounded-full bg-[#E8E2D9]" />
