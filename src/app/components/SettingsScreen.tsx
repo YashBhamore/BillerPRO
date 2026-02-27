@@ -307,20 +307,19 @@ export function SettingsScreen() {
               className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50"
               onClick={() => setShowVendorSheet(false)}
             />
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="fixed rounded-t-3xl z-50"
               style={{
-                bottom: 0,
-                left: '50%',
-                transform: 'translateX(-50%)',
                 width: '100%',
                 maxWidth: 430,
+                borderRadius: '24px 24px 0 0',
                 background: '#FFFFFF',
                 boxShadow: '0 -8px 30px rgba(26,24,22,0.1)',
+                pointerEvents: 'all',
               }}
             >
               <div className="flex justify-center pt-3 pb-1">
@@ -371,6 +370,7 @@ export function SettingsScreen() {
                 </motion.button>
               </div>
             </motion.div>
+            </div>
           </>
         )}
       </AnimatePresence>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
-import { ChevronLeft, Fingerprint } from 'lucide-react';
+import { ChevronLeft, Fingerprint, FolderOpen } from 'lucide-react';
 
 const ACCENT = '#D97757';
 type View = 'welcome' | 'create-account' | 'pin-setup' | 'pin-login';
@@ -157,11 +157,18 @@ export function LoginPage() {
                 style={{ position: 'relative', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
                 <div style={{
-                  width: 120, height: 120, borderRadius: 32,
-                  background: 'linear-gradient(135deg, #D97757, #C4613C)',
-                  boxShadow: '0 20px 60px rgba(217,119,87,0.4)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 54,
-                }}>📊</div>
+                  width: 120, height: 120, borderRadius: Math.round(120 * 0.219),
+                  background: 'linear-gradient(135deg, #E89580, #D77A5C)',
+                  boxShadow: '0 20px 60px rgba(215,122,92,0.45)',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+                }}>
+                  <FolderOpen style={{ width: 60, height: 60, color: 'white', strokeWidth: 1.8 }} />
+                  <div style={{ display: 'flex', gap: 4, marginTop: -8 }}>
+                    <div style={{ width: 3, height: 14, background: 'rgba(255,255,255,0.7)', borderRadius: 9999 }} />
+                    <div style={{ width: 3, height: 18, background: 'rgba(255,255,255,0.6)', borderRadius: 9999 }} />
+                    <div style={{ width: 3, height: 16, background: 'rgba(255,255,255,0.5)', borderRadius: 9999 }} />
+                  </div>
+                </div>
 
                 <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.5 }}
                   style={{ position: 'absolute', left: -68, top: 8, background: '#FFFFFF', borderRadius: 12, padding: '8px 14px', boxShadow: '0 4px 20px rgba(26,24,22,0.12)' }}>
@@ -273,12 +280,19 @@ export function LoginPage() {
               <motion.div
                 initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.1 }}
                 style={{
-                  width: 80, height: 80, borderRadius: 22,
-                  background: 'linear-gradient(135deg, #D97757, #C4613C)',
-                  boxShadow: '0 12px 32px rgba(217,119,87,0.35)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 38, margin: '0 auto 14px',
-                }}>📊</motion.div>
+                  width: 80, height: 80, borderRadius: Math.round(80 * 0.219),
+                  background: 'linear-gradient(135deg, #E89580, #D77A5C)',
+                  boxShadow: '0 12px 32px rgba(215,122,92,0.4)',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
+                  margin: '0 auto 14px',
+                }}>
+                  <FolderOpen style={{ width: 40, height: 40, color: 'white', strokeWidth: 1.8 }} />
+                  <div style={{ display: 'flex', gap: 2, marginTop: -6 }}>
+                    <div style={{ width: 2, height: 8, background: 'rgba(255,255,255,0.7)', borderRadius: 9999 }} />
+                    <div style={{ width: 2, height: 11, background: 'rgba(255,255,255,0.6)', borderRadius: 9999 }} />
+                    <div style={{ width: 2, height: 9, background: 'rgba(255,255,255,0.5)', borderRadius: 9999 }} />
+                  </div>
+                </motion.div>
 
               <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
                 style={{ fontSize: 28, fontWeight: 800, color: ACCENT, letterSpacing: '-0.02em', margin: '0 0 6px' }}>

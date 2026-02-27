@@ -235,20 +235,20 @@ export function HomeDashboard() {
               className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50"
               onClick={() => setShowVendorSheet(false)}
             />
+            {/* Centering wrapper — separate from animated element so transforms don't conflict */}
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="fixed rounded-t-2xl z-50"
               style={{
-                bottom: 0,
-                left: '50%',
-                transform: 'translateX(-50%)',
                 width: '100%',
                 maxWidth: 430,
+                borderRadius: '20px 20px 0 0',
                 background: '#FFFFFF',
                 boxShadow: '0 -4px 20px rgba(26,24,22,0.08)',
+                pointerEvents: 'all',
               }}
             >
               <div className="flex justify-center pt-3 pb-1">
@@ -305,6 +305,7 @@ export function HomeDashboard() {
                 </motion.button>
               </div>
             </motion.div>
+            </div>
           </>
         )}
       </AnimatePresence>
