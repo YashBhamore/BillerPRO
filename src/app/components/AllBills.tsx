@@ -7,6 +7,18 @@ function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
+function extractBillNoFromNotes(notes?: string): string {
+  if (!notes) return '';
+  const match = notes.match(/Bill\s*#\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i);
+  return match?.[1]?.trim() || '';
+}
+
+function getBillNumber(bill: any): string {
+  const direct = typeof bill.billNumber === 'string' ? bill.billNumber.trim() : '';
+  if (direct) return direct;
+  return extractBillNoFromNotes(bill.notes);
+}
+
 export function AllBills() {
   const { state, getVendor, deleteBill, setActiveTab } = useApp();
   const [search, setSearch] = useState('');
@@ -21,7 +33,13 @@ export function AllBills() {
       const q = search.toLowerCase();
       bills = bills.filter(b => {
         const v = getVendor(b.vendorId);
-        return b.customerName.toLowerCase().includes(q) || v?.name.toLowerCase().includes(q) || b.amount.toString().includes(q);
+        const billNo = getBillNumber(b).toLowerCase();
+        return (
+          b.customerName.toLowerCase().includes(q) ||
+          v?.name.toLowerCase().includes(q) ||
+          b.amount.toString().includes(q) ||
+          billNo.includes(q)
+        );
       });
     }
     return bills.sort((a, b) => b.date.localeCompare(a.date));
@@ -39,6 +57,7 @@ export function AllBills() {
 
   const bill = selectedBill ? state.bills.find(b => b.id === selectedBill) : null;
   const billVendor = bill ? getVendor(bill.vendorId) : null;
+  const billNo = bill ? getBillNumber(bill) : '';
 
   return (
     <div className="min-h-full px-5 pt-6 pb-5">
@@ -133,6 +152,7 @@ export function AllBills() {
                 {bills.map((b, idx) => {
                   const vendor = getVendor(b.vendorId);
                   const cut = vendor ? b.amount * vendor.cutPercent / 100 : 0;
+                  const billNo = getBillNumber(b);
                   return (
                     <motion.div
                       key={b.id}
@@ -154,7 +174,14 @@ export function AllBills() {
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[#8B8579]" style={{ fontSize: 14 }}>{b.customerName}</span>
+                        <div>
+                          <span className="text-[#8B8579]" style={{ fontSize: 14 }}>{b.customerName}</span>
+                          {billNo && (
+                            <span className="block" style={{ fontSize: 11, color: '#ADA79F', marginTop: 1 }}>
+                              Bill #{billNo}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-3">
                           <span className="text-[#1A1816]" style={{ fontSize: 17, fontWeight: 700 }}>{formatCurrency(b.amount)}</span>
                           <span className="text-[#5C9A6F]" style={{ fontSize: 14, fontWeight: 600 }}>+{formatCurrency(Math.round(cut))}</span>
@@ -197,6 +224,7 @@ export function AllBills() {
                 <div className="space-y-3 mb-5">
                   {[
                     { label: 'Date', value: new Date(bill.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) },
+                    ...(billNo ? [{ label: 'Bill No.', value: `#${billNo}` }] : []),
                     { label: 'Vendor', value: billVendor.name },
                     { label: 'Customer', value: bill.customerName },
                     { label: 'Amount', value: formatCurrency(bill.amount) },
