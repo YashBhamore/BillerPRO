@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, X, Users, IndianRupee, Percent, TrendingUp, LogOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Pencil, X, Users, IndianRupee, Percent, TrendingUp, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { CircularProgress } from './CircularProgress';
@@ -21,7 +21,7 @@ export function HomeDashboard() {
   const {
     state, getVendor, getBillsForMonth, getEarningsForMonth,
     getTotalBillsForMonth, setSelectedMonth, addVendor, updateVendor,
-    deleteVendor, setActiveTab, logout,
+    setActiveTab, logout,
   } = useApp();
 
   const [year, month] = state.selectedMonth.split('-').map(Number);
@@ -215,9 +215,7 @@ export function HomeDashboard() {
                 <button onClick={() => openEditVendor(vendor.id)} className="p-1.5 rounded-md active:bg-[#F5F0EB]">
                   <Pencil className="w-4 h-4 text-[#C4BFB6]" />
                 </button>
-                <button onClick={() => { deleteVendor(vendor.id); toast.success('Deleted'); }} className="p-1.5 rounded-md active:bg-[#FBF0EE]">
-                  <Trash2 className="w-4 h-4 text-[#C45C4A]/40" />
-                </button>
+
               </motion.div>
             );
           })}
