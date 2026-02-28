@@ -1,4 +1,4 @@
-# 🧾 BillerPRO — End-to-End Data & Billing Intelligence Platform
+# 🧾 BillerPRO — End-to-End Data & Billing Intelligence Platform 
 
 > A full-stack, data-science-ready application covering the complete data lifecycle — from raw ingestion and ETL pipelines to interactive dashboards and business analytics — built on a production-grade TypeScript architecture.
 
