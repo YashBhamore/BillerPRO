@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import {
   CloudUpload, FolderOpen, Camera, CheckCircle2,
-  AlertTriangle, Loader2, Key, X, Eye, EyeOff, ShieldCheck,
+  AlertTriangle, Loader2, ShieldCheck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
@@ -96,77 +96,31 @@ function maskSensitiveData(rawText: string): MaskResult {
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 3: SEND MASKED TEXT to Claude API for smart extraction
 // ─────────────────────────────────────────────────────────────────────────────
+// Calls our own Vercel /api/scan proxy — no CORS issue, API key stays on server
 async function extractWithClaude(
   maskedText: string,
-  apiKey: string,
+  _apiKey: string,
   vendorNames: string[],
 ): Promise<{
-  customerName: string;
-  amount: string;
-  date: string;
-  billNumber: string;
-  vendorHint: string;
+  customerName: string; amount: string; date: string;
+  billNumber: string; vendorHint: string;
   confidence: { customerName: Confidence; amount: Confidence; date: Confidence };
 }> {
-  const vendorList = vendorNames.length > 0
-    ? `Known vendors in system: ${vendorNames.join(', ')}`
-    : '';
-
-  const prompt = `You are reading extracted text from an Indian GST Tax Invoice.
-${vendorList}
-
-The text below has already had sensitive fields masked for privacy. Extract ONLY these fields and return valid JSON:
-
-{
-  "customerName": "Name from 'Details of Receiver / Billed To' section",
-  "amount": "Net Amount as number only (final payable total, bottom of bill)",
-  "date": "Invoice Date in YYYY-MM-DD format",
-  "billNumber": "Invoice Number / Bill Number",
-  "vendorHint": "Company name at TOP of bill (the seller/issuer, NOT the receiver)",
-  "confidence": {
-    "customerName": "high|medium|low",
-    "amount": "high|medium|low",
-    "date": "high|medium|low"
-  }
-}
-
-Rules:
-- customerName = the BUYER (Billed To / Receiver). NOT the company at the top.
-- amount = Net Amount (final total after GST, not taxable amount)
-- date = Invoice Date only. Convert DD/MM/YYYY to YYYY-MM-DD.
-- billNumber = Invoice No / Bill No number
-- vendorHint = the SELLER company at top (e.g. "F & F DECOR")
-- Return ONLY the JSON, no explanation, no markdown fences.
-
-BILL TEXT:
-${maskedText.slice(0, 4000)}`; // cap at 4000 chars to save tokens
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch('/api/scan', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001', // cheapest, plenty smart for this task
-      max_tokens: 400,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maskedText, vendorNames }),
   });
-
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    if (response.status === 401) throw new Error('Invalid API key. Check in Upload settings.');
-    if (response.status === 429) throw new Error('Too many requests — wait a moment and retry.');
-    throw new Error(err?.error?.message || `API error ${response.status}`);
+    if (response.status === 500 && String(err?.error).includes('not configured')) {
+      throw new Error('ANTHROPIC_API_KEY not set in Vercel — see setup guide.');
+    }
+    throw new Error(err?.error || `Server error ${response.status}`);
   }
-
-  const data = await response.json();
-  const text = data.content?.find((b: any) => b.type === 'text')?.text || '';
-  const clean = text.replace(/```json|```/gi, '').trim();
-  return JSON.parse(clean);
+  return response.json();
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // For IMAGE bills: use Tesseract.js OCR locally → mask → send text to Claude
@@ -193,7 +147,7 @@ async function extractTextFromImage(file: File): Promise<string> {
 
 async function extractFromImage(
   file: File,
-  apiKey: string,
+  _apiKey: string,
   vendorNames: string[],
 ): Promise<{ result: any; maskedFields: string[] }> {
   // Step 1: OCR on device — image never leaves
@@ -202,8 +156,8 @@ async function extractFromImage(
   // Step 2: Mask sensitive fields locally
   const { maskedText, maskedFields } = maskSensitiveData(rawText);
 
-  // Step 3: Send only masked TEXT to Claude (not the image)
-  const result = await extractWithClaude(maskedText, apiKey, vendorNames);
+  // Step 3: Send only masked TEXT to /api/scan proxy (not the image, not to Anthropic directly)
+  const result = await extractWithClaude(maskedText, '', vendorNames);
 
   return { result, maskedFields };
 }
@@ -221,12 +175,9 @@ function fileToBase64(file: File): Promise<string> {
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export function UploadBill() {
-  const { state, addBill, getVendor, setActiveTab, setClaudeApiKey } = useApp();
+  const { state, addBill, getVendor, setActiveTab } = useApp();
 
   const [stage, setStage] = useState<Stage>('upload');
-  const [showApiSheet, setShowApiSheet] = useState(false);
-  const [tempApiKey, setTempApiKey] = useState('');
-  const [showKeyText, setShowKeyText] = useState(false);
   const [fileName, setFileName] = useState('');
   const [maskedFields, setMaskedFields] = useState<string[]>([]);
   const [stageLabel, setStageLabel] = useState('');
@@ -248,7 +199,6 @@ export function UploadBill() {
   const selectedVendor = getVendor(extractedVendorId);
   const amount = parseFloat(extractedAmount) || 0;
   const cut = selectedVendor ? amount * selectedVendor.cutPercent / 100 : 0;
-  const hasApiKey = !!state.claudeApiKey;
 
   function matchVendor(hint: string): string {
     if (!hint || state.vendors.length === 0) return '';
@@ -265,12 +215,6 @@ export function UploadBill() {
   // ── Main file handler ──────────────────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file) return;
-
-    if (!state.claudeApiKey) {
-      setShowApiSheet(true);
-      toast.error('Set your API key first');
-      return;
-    }
 
     const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
@@ -300,7 +244,7 @@ export function UploadBill() {
 
         setStage('processing');
         setStageLabel('Sending to Claude AI...');
-        result = await extractWithClaude(maskedText, state.claudeApiKey, state.vendors.map(v => v.name));
+        result = await extractWithClaude(maskedText, '', state.vendors.map(v => v.name));
 
       } else {
         // ── IMAGE FLOW: send to Claude with strict no-bank-data prompt ────
@@ -308,7 +252,7 @@ export function UploadBill() {
         setStage('extracting');
         setStageLabel('Reading image text on device (OCR)...');
         const { result: imgResult, maskedFields: imgMf } = await extractFromImage(
-          file, state.claudeApiKey, state.vendors.map(v => v.name)
+          file, '', state.vendors.map(v => v.name)
         );
         result = imgResult;
         setMaskedFields(imgMf.length > 0 ? imgMf : ['No sensitive fields found']);
@@ -380,19 +324,17 @@ export function UploadBill() {
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1A1816', margin: '0 0 4px' }}>Upload Bill</h2>
           <p style={{ fontSize: 14, color: '#8B8579', margin: 0 }}>
-            {hasApiKey ? 'Bills are masked before AI scanning' : 'Set API key to enable scanning'}
+            'PDF text masked locally before AI scanning'
           </p>
         </div>
-        <button onClick={() => setShowApiSheet(true)}
-          style={{
+        <div style={{
             display: 'flex', alignItems: 'center', gap: 5,
-            padding: '7px 12px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: hasApiKey ? '#EEF5F0' : '#FDF5F0',
-            color: hasApiKey ? '#5C9A6F' : '#D97757', fontSize: 13, fontWeight: 600,
+            padding: '7px 12px', borderRadius: 10,
+            background: '#EEF5F0', fontSize: 13, fontWeight: 600, color: '#5C9A6F',
           }}>
-          <Key style={{ width: 13, height: 13 }} />
-          {hasApiKey ? 'API ✓' : 'Set Key'}
-        </button>
+          <ShieldCheck style={{ width: 13, height: 13 }} />
+          AI Ready
+        </div>
       </div>
 
       {/* Hidden file inputs */}
@@ -410,23 +352,23 @@ export function UploadBill() {
             <button onClick={() => fileInputRef.current?.click()}
               style={{
                 width: '100%', padding: '56px 0', borderRadius: 20, cursor: 'pointer',
-                border: `2px dashed ${hasApiKey ? 'rgba(217,119,87,0.35)' : '#E8E2D9'}`,
-                background: hasApiKey ? '#FDF5F0' : '#F9F7F4',
+                border: `2px dashed rgba(217,119,87,0.35)`,
+                background: '#FDF5F0',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
               }}>
-              <div style={{ width: 60, height: 60, borderRadius: 16, background: hasApiKey ? 'rgba(217,119,87,0.12)' : '#F0EBE3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CloudUpload style={{ width: 26, height: 26, color: hasApiKey ? '#D97757' : '#ADA79F' }} />
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: 'rgba(217,119,87,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CloudUpload style={{ width: 26, height: 26, color: '#D97757' }} />
               </div>
               <div style={{ textAlign: 'center' }}>
                 <p style={{ fontSize: 16, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>
-                  {hasApiKey ? 'Tap to upload PDF or photo' : 'Set API key first'}
+                  Tap to upload PDF or photo
                 </p>
                 <p style={{ fontSize: 13, color: '#8B8579', margin: 0 }}>PDF, JPG, PNG supported</p>
               </div>
             </button>
 
             {/* Privacy badge */}
-            {hasApiKey && (
+            {(
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0', padding: '10px 14px', borderRadius: 12, background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)' }}>
                 <ShieldCheck style={{ width: 16, height: 16, color: '#5C9A6F', flexShrink: 0 }} />
                 <p style={{ fontSize: 12, color: '#5C9A6F', margin: 0, lineHeight: 1.4 }}>
@@ -638,76 +580,6 @@ export function UploadBill() {
 
       </AnimatePresence>
 
-      {/* ── API KEY SHEET ─────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {showApiSheet && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setShowApiSheet(false)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-              <motion.div
-                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                style={{ width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0', background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)', padding: '20px 24px 44px', pointerEvents: 'all' }}>
-
-                <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 20px' }} />
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <h3 style={{ fontSize: 19, fontWeight: 700, color: '#1A1816', margin: 0 }}>Claude API Key</h3>
-                  <button onClick={() => setShowApiSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                    <X style={{ width: 19, height: 19, color: '#8B8579' }} />
-                  </button>
-                </div>
-                <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 16px', lineHeight: 1.5 }}>
-                  Needed for AI bill scanning. Saved only on this device.
-                </p>
-
-                <div style={{ background: '#F5F0EB', borderRadius: 11, padding: '12px 14px', marginBottom: 14 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', margin: '0 0 8px' }}>How to get your key:</p>
-                  {['1. Open console.anthropic.com on laptop', '2. Sign up free → API Keys → Create Key', '3. Copy key starting with sk-ant-...', '4. Paste below and tap Save'].map((s, i) => (
-                    <p key={i} style={{ fontSize: 12, color: '#6B6560', margin: '0 0 3px' }}>{s}</p>
-                  ))}
-                  <p style={{ fontSize: 11, color: '#ADA79F', margin: '8px 0 0' }}>~₹0.01 per bill scan · Free $5 credit to start</p>
-                </div>
-
-                <div style={{ position: 'relative', marginBottom: 12 }}>
-                  <input type={showKeyText ? 'text' : 'password'}
-                    value={tempApiKey || state.claudeApiKey}
-                    onChange={e => setTempApiKey(e.target.value)}
-                    placeholder="sk-ant-api03-..."
-                    style={{ width: '100%', padding: '13px 44px 13px 15px', borderRadius: 11, fontSize: 14, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box', fontFamily: 'monospace' }} />
-                  <button onClick={() => setShowKeyText(s => !s)}
-                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                    {showKeyText ? <EyeOff style={{ width: 17, height: 17, color: '#8B8579' }} /> : <Eye style={{ width: 17, height: 17, color: '#8B8579' }} />}
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <motion.button whileTap={{ scale: 0.97 }}
-                    onClick={() => {
-                      const key = (tempApiKey || state.claudeApiKey).trim();
-                      if (!key.startsWith('sk-ant')) { toast.error('Invalid key format'); return; }
-                      setClaudeApiKey(key);
-                      setTempApiKey('');
-                      setShowApiSheet(false);
-                      toast.success('API key saved! Ready to scan.');
-                    }}
-                    style={{ flex: 1, padding: '13px 0', borderRadius: 13, color: '#FFFFFF', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 15, fontWeight: 600 }}>
-                    Save Key
-                  </motion.button>
-                  {state.claudeApiKey && (
-                    <button onClick={() => { setClaudeApiKey(''); setTempApiKey(''); setShowApiSheet(false); toast.success('Key removed'); }}
-                      style={{ padding: '13px 16px', borderRadius: 13, color: '#C45C4A', background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </motion.div>
-            </div>
-          </>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
