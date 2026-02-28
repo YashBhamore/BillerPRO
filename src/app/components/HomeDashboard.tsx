@@ -140,7 +140,7 @@ export function HomeDashboard() {
         {[
           { icon: IndianRupee, label: 'Total Bills', value: formatShort(totalBills), color: '#D97757', bg: '#FDF5F0', tab: 'bills' },
           { icon: TrendingUp, label: 'Earnings', value: formatShort(Math.round(totalEarnings)), color: '#5C9A6F', bg: '#EEF5F0', tab: 'analytics' },
-          { icon: Users, label: 'Vendors', value: String(activeVendors), color: '#D4A853', bg: '#FBF5E8', tab: 'settings' },
+          { icon: Users, label: 'Vendors', value: String(state.vendors.length), color: '#D4A853', bg: '#FBF5E8', tab: 'settings' },
           { icon: Percent, label: 'Avg Cut', value: avgCutPercent.toFixed(1) + '%', color: '#9B7E6B', bg: '#F5F0EB', tab: 'analytics' },
         ].map((stat, i) => (
           <motion.button
