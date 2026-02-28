@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../store';
-import { Pencil, Trash2, Plus, Download, Moon, Sun, Monitor, Bell, ChevronRight, X, LogOut } from 'lucide-react';
+import {
+  Pencil, Trash2, Plus, Download, Moon, Sun, Monitor,
+  ChevronRight, X, LogOut, CloudOff, RefreshCw, Loader2,
+  CheckCircle2, AlertCircle, FolderOpen,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { exportToCSV, exportMonthToCSV } from '../store';
@@ -9,367 +13,433 @@ function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
+function timeAgo(iso: string | null): string {
+  if (!iso) return 'Never';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
 export function SettingsScreen() {
   const {
     state, setUserProfile, setMonthlyTarget,
     addVendor, updateVendor, deleteVendor, logout, setTheme,
+    connectDrive, disconnectDrive, loadFromDrive, setDriveClientId,
   } = useApp();
 
+  // Vendor sheet state
   const [showVendorSheet, setShowVendorSheet] = useState(false);
   const [editingVendor, setEditingVendor] = useState<string | null>(null);
   const [vendorName, setVendorName] = useState('');
   const [vendorCut, setVendorCut] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Target edit
   const [editingTarget, setEditingTarget] = useState(false);
   const [targetValue, setTargetValue] = useState(String(state.monthlyTarget));
-  const [editingField, setEditingField] = useState<string | null>(null);
 
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [notifications, setNotifications] = useState({
-    billReminder: true,
-    targetAlerts: true,
-    milestoneNotifs: true,
-  });
+  // Drive sheet state
+  const [showDriveSheet, setShowDriveSheet] = useState(false);
+  const [driveClientIdInput, setDriveClientIdInput] = useState('');
+  const [driveConnecting, setDriveConnecting] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
 
-  const openAddVendor = () => {
-    setEditingVendor(null);
-    setVendorName('');
-    setVendorCut('');
-    setShowVendorSheet(true);
-  };
+  // Auto-load from Drive on startup if already connected
+  useEffect(() => {
+    if (state.driveStatus.connected && !state.driveStatus.syncing) {
+      loadFromDrive().catch(() => {});
+    }
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const openEditVendor = (id: string) => {
-    const v = state.vendors.find(v => v.id === id);
-    if (!v) return;
-    setEditingVendor(id);
+  // Vendor save
+  function saveVendor() {
+    if (!vendorName.trim() || !vendorCut) { toast.error('Fill all fields'); return; }
+    const cut = parseFloat(vendorCut);
+    if (isNaN(cut) || cut <= 0 || cut > 100) { toast.error('Cut % must be 1–100'); return; }
+    if (editingVendor) {
+      updateVendor(editingVendor, vendorName.trim(), cut);
+      toast.success('Vendor updated!');
+    } else {
+      addVendor(vendorName.trim(), cut);
+      toast.success('Vendor added!');
+    }
+    setShowVendorSheet(false);
+    setVendorName(''); setVendorCut(''); setEditingVendor(null);
+  }
+
+  function openEditVendor(v: { id: string; name: string; cutPercent: number }) {
+    setEditingVendor(v.id);
     setVendorName(v.name);
     setVendorCut(String(v.cutPercent));
     setShowVendorSheet(true);
-  };
+  }
 
-  const saveVendor = () => {
-    if (!vendorName || !vendorCut) { toast.error('Fill all fields'); return; }
-    if (editingVendor) {
-      updateVendor(editingVendor, vendorName, parseFloat(vendorCut));
-      toast.success('Vendor updated');
-    } else {
-      addVendor(vendorName, parseFloat(vendorCut));
-      toast.success('Vendor added');
-    }
-    setShowVendorSheet(false);
-  };
-
-  const saveTarget = () => {
-    setMonthlyTarget(parseInt(targetValue) || 0);
-    setEditingTarget(false);
-    toast.success('Target updated');
-  };
+  const ds = state.driveStatus;
 
   return (
-    <div className="min-h-full px-5 pt-6 pb-5">
-      <div className="mb-6">
-        <h2 className="text-[#1A1816] mb-1" style={{ fontSize: 22, fontWeight: 700 }}>Settings</h2>
-        <p className="text-[#8B8579]" style={{ fontSize: 15 }}>Manage your account and preferences</p>
-      </div>
+    <div style={{ padding: '24px 20px 100px' }}>
+      <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1A1816', margin: '0 0 20px' }}>Settings</h2>
 
-      {/* Profile */}
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-        <p className="text-[#8B8579] mb-4" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>PROFILE</p>
-        <div className="flex items-center gap-4 mb-4">
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center text-white flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 22, fontWeight: 700 }}
-          >
-            {state.user.name.split(' ').map(w => w[0]).join('')}
+      {/* ── GOOGLE DRIVE ──────────────────────────────────────────────────── */}
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: ds.connected ? 14 : 0 }}>
+          <div>
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 4px' }}>GOOGLE DRIVE</p>
+            {ds.connected
+              ? <p style={{ fontSize: 13, color: '#5C9A6F', margin: 0, fontWeight: 500 }}>● {ds.userEmail}</p>
+              : <p style={{ fontSize: 13, color: '#ADA79F', margin: 0 }}>Back up all bills & vendors automatically</p>}
           </div>
-          <div className="flex-1">
-            {editingField === 'name' ? (
-              <input
-                value={state.user.name}
-                onChange={e => setUserProfile({ name: e.target.value })}
-                onBlur={() => setEditingField(null)}
-                className="text-[#1A1816] rounded-lg px-3 py-2 w-full outline-none focus:border-[#D97757]"
-                style={{ fontSize: 17, fontWeight: 600, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
-                autoFocus
-              />
-            ) : (
-              <button onClick={() => setEditingField('name')} className="flex items-center gap-2 text-left">
-                <span className="text-[#1A1816]" style={{ fontSize: 18, fontWeight: 700 }}>{state.user.name}</span>
-                <Pencil className="w-3.5 h-3.5 text-[#C4BFB6]" />
-              </button>
-            )}
-            {editingField === 'business' ? (
-              <input
-                value={state.user.businessName}
-                onChange={e => setUserProfile({ businessName: e.target.value })}
-                onBlur={() => setEditingField(null)}
-                className="text-[#6B6560] rounded-lg px-3 py-2 w-full outline-none focus:border-[#D97757] mt-1"
-                style={{ fontSize: 15, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
-                autoFocus
-              />
-            ) : (
-              <button onClick={() => setEditingField('business')} className="flex items-center gap-2 text-left mt-0.5">
-                <span className="text-[#8B8579]" style={{ fontSize: 15 }}>{state.user.businessName}</span>
-                <Pencil className="w-3 h-3 text-[#C4BFB6]" />
-              </button>
-            )}
-          </div>
+          {ds.connected ? (
+            <button onClick={() => { disconnectDrive(); toast.success('Disconnected from Drive'); }}
+              style={{ fontSize: 12, fontWeight: 600, color: '#C45C4A', background: '#FBF0EE', padding: '5px 10px', borderRadius: 8, border: 'none', cursor: 'pointer' }}>
+              Disconnect
+            </button>
+          ) : (
+            <button onClick={() => setShowDriveSheet(true)}
+              style={{ fontSize: 13, fontWeight: 700, color: '#fff', background: '#4285F4', padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57C21.36 18.52 22.56 15.59 22.56 12.25z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#fff"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff"/></svg>
+              Connect
+            </button>
+          )}
         </div>
-        <p className="text-[#8B8579]" style={{ fontSize: 14 }}>{state.user.email}</p>
-      </div>
 
-      {/* Vendors */}
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-[#8B8579]" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>VENDORS</p>
-          <button onClick={openAddVendor} className="flex items-center gap-1 text-[#D97757]" style={{ fontSize: 14, fontWeight: 600 }}>
-            <Plus className="w-4 h-4" /> Add
-          </button>
-        </div>
-        <div className="space-y-2">
-          {state.vendors.map(v => (
-            <div key={v.id} className="flex items-center gap-3 py-3" style={{ borderBottom: '1px solid #F0EBE3' }}>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center text-white flex-shrink-0" style={{ background: v.color, fontSize: 13, fontWeight: 700 }}>
-                {v.name.split(' ').map(w => w[0]).join('').substring(0, 2)}
-              </div>
-              <span className="flex-1 text-[#1A1816] truncate" style={{ fontSize: 16, fontWeight: 500 }}>{v.name}</span>
-              <span className="px-2.5 py-1 rounded-md flex-shrink-0" style={{ background: v.color + '15', color: v.color, fontSize: 14, fontWeight: 700 }}>{v.cutPercent}%</span>
-              <button onClick={() => openEditVendor(v.id)} className="p-1.5 rounded-lg hover:bg-[#F5F0EB]">
-                <Pencil className="w-4 h-4 text-[#8B8579]" />
-              </button>
-              {confirmDeleteId === v.id ? (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => { deleteVendor(v.id); setConfirmDeleteId(null); toast.success('Vendor deleted'); }}
-                    className="px-2.5 py-1 rounded-lg text-white text-xs font-semibold"
-                    style={{ background: '#C45C4A', fontSize: 12 }}>
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => setConfirmDeleteId(null)}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold"
-                    style={{ background: '#F0EBE3', color: '#6B6560', fontSize: 12 }}>
-                    Cancel
-                  </button>
+        {ds.connected && (
+          <div>
+            {/* Sync status row */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: 12, background: '#F5F0EB', marginBottom: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <FolderOpen style={{ width: 15, height: 15, color: '#D97757' }} />
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', margin: 0 }}>BillerPRO Data/</p>
+                  <p style={{ fontSize: 11, color: '#ADA79F', margin: 0 }}>
+                    {state.bills.length} bills · {state.vendors.length} vendors
+                  </p>
                 </div>
-              ) : (
-                <button onClick={() => setConfirmDeleteId(v.id)} className="p-1.5 rounded-lg hover:bg-[#FBF0EE]">
-                  <Trash2 className="w-4 h-4 text-[#C45C4A]/50" />
-                </button>
-              )}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                {ds.syncing
+                  ? <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#D97757' }}>
+                      <Loader2 style={{ width: 13, height: 13, animation: 'spin 1s linear infinite' }} />
+                      <span style={{ fontSize: 11 }}>Syncing...</span>
+                    </div>
+                  : ds.syncError
+                    ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#C45C4A' }}>
+                        <AlertCircle style={{ width: 13, height: 13 }} />
+                        <span style={{ fontSize: 11 }}>Sync failed</span>
+                      </div>
+                    : <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#5C9A6F' }}>
+                        <CheckCircle2 style={{ width: 13, height: 13 }} />
+                        <span style={{ fontSize: 11 }}>{timeAgo(ds.lastSync)}</span>
+                      </div>}
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* Monthly Target */}
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-        <p className="text-[#8B8579] mb-3" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>MONTHLY TARGET</p>
-        {editingTarget ? (
-          <div className="flex items-center gap-2">
-            <span className="text-[#1A1816]" style={{ fontSize: 20, fontWeight: 700 }}>₹</span>
-            <input
-              type="number"
-              value={targetValue}
-              onChange={e => setTargetValue(e.target.value)}
-              className="flex-1 text-[#1A1816] rounded-lg px-3 py-2.5 outline-none focus:border-[#D97757]"
-              style={{ fontSize: 18, fontWeight: 600, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
-              autoFocus
-            />
-            <button onClick={saveTarget} className="px-4 py-2.5 rounded-lg text-white" style={{ background: '#D97757', fontSize: 15, fontWeight: 600 }}>
-              Save
+            {/* What auto-syncs info */}
+            <p style={{ fontSize: 11, color: '#ADA79F', margin: '0 0 10px', lineHeight: 1.5, padding: '0 4px' }}>
+              Every bill scan, vendor change & target update is automatically saved to your Google Drive in real time.
+            </p>
+
+            {/* Reload from Drive button */}
+            <button
+              disabled={driveLoading || ds.syncing}
+              onClick={async () => {
+                setDriveLoading(true);
+                const ok = await loadFromDrive();
+                setDriveLoading(false);
+                if (ok) toast.success('Data loaded from your Drive!');
+                else toast.error(ds.syncError || 'Could not load from Drive');
+              }}
+              style={{
+                width: '100%', padding: '11px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                background: driveLoading ? '#E8E2D9' : '#F5F0EB', color: '#6B6560',
+                fontSize: 13, fontWeight: 600,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+              {driveLoading
+                ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Loading from Drive...</>
+                : <><RefreshCw style={{ width: 14, height: 14 }} /> Load latest from Drive</>}
             </button>
           </div>
+        )}
+      </div>
+
+      {/* ── VENDORS ───────────────────────────────────────────────────────── */}
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: 0 }}>VENDORS</p>
+          <button onClick={() => { setEditingVendor(null); setVendorName(''); setVendorCut(''); setShowVendorSheet(true); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, color: '#D97757', background: '#FDF5F0', padding: '6px 12px', borderRadius: 9, border: 'none', cursor: 'pointer' }}>
+            <Plus style={{ width: 14, height: 14 }} /> Add Vendor
+          </button>
+        </div>
+
+        {state.vendors.length === 0
+          ? <p style={{ fontSize: 14, color: '#ADA79F', textAlign: 'center', padding: '16px 0', margin: 0 }}>No vendors yet — add one to start tracking</p>
+          : state.vendors.map(v => (
+            <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #F5F0EB' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: v.color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: v.color }}>
+                    {v.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{v.name}</p>
+                  <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>{v.cutPercent}% commission cut</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {confirmDeleteId === v.id ? (
+                  <>
+                    <button onClick={() => { deleteVendor(v.id); setConfirmDeleteId(null); toast.success('Vendor deleted'); }}
+                      style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: '#C45C4A', padding: '5px 10px', borderRadius: 7, border: 'none', cursor: 'pointer' }}>
+                      Delete
+                    </button>
+                    <button onClick={() => setConfirmDeleteId(null)}
+                      style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', background: '#F0EBE3', padding: '5px 10px', borderRadius: 7, border: 'none', cursor: 'pointer' }}>
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => openEditVendor(v)}
+                      style={{ width: 32, height: 32, borderRadius: 9, background: '#F5F0EB', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Pencil style={{ width: 14, height: 14, color: '#6B6560' }} />
+                    </button>
+                    <button onClick={() => setConfirmDeleteId(v.id)}
+                      style={{ width: 32, height: 32, borderRadius: 9, background: '#FBF0EE', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Trash2 style={{ width: 14, height: 14, color: '#C45C4A' }} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+      </div>
+
+      {/* ── MONTHLY TARGET ────────────────────────────────────────────────── */}
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 12px' }}>MONTHLY TARGET</p>
+        {editingTarget ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 22, color: '#8B8579' }}>₹</span>
+              <input type="number" value={targetValue} onChange={e => setTargetValue(e.target.value)} autoFocus
+                style={{ flex: 1, fontSize: 28, fontWeight: 700, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { const v = parseFloat(targetValue); if (v > 0) { setMonthlyTarget(v); setEditingTarget(false); toast.success('Target updated!'); } }}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: '#D97757', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                Save
+              </button>
+              <button onClick={() => setEditingTarget(false)}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: '#F0EBE3', color: '#6B6560', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
         ) : (
-          <div className="flex items-center justify-between">
-            <span className="text-[#1A1816]" style={{ fontSize: 24, fontWeight: 700 }}>{formatCurrency(state.monthlyTarget)}</span>
-            <button onClick={() => { setTargetValue(String(state.monthlyTarget)); setEditingTarget(true); }} className="text-[#D97757]" style={{ fontSize: 15, fontWeight: 600 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ fontSize: 26, fontWeight: 700, color: '#1A1816', margin: '0 0 2px' }}>
+                {state.monthlyTarget > 0 ? formatCurrency(state.monthlyTarget) : 'Not set'}
+              </p>
+              <p style={{ fontSize: 12, color: '#ADA79F', margin: 0 }}>earnings target per month</p>
+            </div>
+            <button onClick={() => { setTargetValue(String(state.monthlyTarget)); setEditingTarget(true); }}
+              style={{ fontSize: 14, fontWeight: 600, color: '#D97757', background: '#FDF5F0', padding: '8px 14px', borderRadius: 10, border: 'none', cursor: 'pointer' }}>
               Edit
             </button>
           </div>
         )}
       </div>
 
-      {/* Export */}
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-        <p className="text-[#8B8579] mb-3" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>DATA & EXPORT</p>
+      {/* ── EXPORT ────────────────────────────────────────────────────────── */}
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 12px' }}>EXPORT DATA</p>
         {[
-          { label: "Export this month", sub: "Current month as CSV file", action: () => {
+          { label: 'Export this month', sub: 'Current month as CSV', action: () => {
             const mb = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
             if (!mb.length) { toast.error('No bills this month'); return; }
             exportMonthToCSV(state.bills, state.vendors, state.selectedMonth);
             toast.success(`Exported ${mb.length} bills!`);
           }},
-          { label: "Export all data", sub: "All bills — opens in Excel/Sheets", action: () => {
-            if (!state.bills.length) { toast.error('No bills to export yet'); return; }
+          { label: 'Export all data', sub: 'All bills — opens in Excel', action: () => {
+            if (!state.bills.length) { toast.error('No bills yet'); return; }
             exportToCSV(state.bills, state.vendors);
             toast.success(`Exported ${state.bills.length} bills!`);
           }},
         ].map(item => (
-          <button
-            key={item.label}
-            onClick={item.action}
-            className="w-full flex items-center justify-between py-3.5 last:border-0 transition-all hover:bg-[#F5F0EB] rounded-lg px-1"
-            style={{ borderBottom: '1px solid #F0EBE3' }}
-          >
-            <div className="flex items-center gap-3">
-              <Download className="w-[18px] h-[18px] text-[#5C9A6F]" />
-              <div className="text-left">
-                <p className="text-[#1A1816]" style={{ fontSize: 16 }}>{item.label}</p>
-                <p className="text-[#8B8579]" style={{ fontSize: 12 }}>{item.sub}</p>
+          <button key={item.label} onClick={item.action}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px', borderBottom: '1px solid #F5F0EB', background: 'transparent', border: 'none', cursor: 'pointer', borderRadius: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Download style={{ width: 17, height: 17, color: '#5C9A6F' }} />
+              <div style={{ textAlign: 'left' }}>
+                <p style={{ fontSize: 15, color: '#1A1816', margin: '0 0 1px' }}>{item.label}</p>
+                <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>{item.sub}</p>
               </div>
             </div>
-            <ChevronRight className="w-[18px] h-[18px] text-[#C4BFB6]" />
+            <ChevronRight style={{ width: 17, height: 17, color: '#C4BFB6' }} />
           </button>
         ))}
       </div>
 
-      {/* Notifications */}
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-        <p className="text-[#8B8579] mb-3" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>NOTIFICATIONS</p>
-        {[
-          { key: 'billReminder' as const, label: 'Bill Upload Reminder' },
-          { key: 'targetAlerts' as const, label: 'Monthly Target Alerts' },
-          { key: 'milestoneNotifs' as const, label: 'Milestone Notifications' },
-        ].map(item => (
-          <div key={item.key} className="flex items-center justify-between py-3.5" style={{ borderBottom: '1px solid #F0EBE3' }}>
-            <span className="text-[#1A1816]" style={{ fontSize: 16 }}>{item.label}</span>
-            <button
-              onClick={() => setNotifications(n => ({ ...n, [item.key]: !n[item.key] }))}
-              className="w-12 h-7 rounded-full p-0.5 transition-colors"
-              style={{ background: notifications[item.key] ? '#D97757' : '#E8E2D9' }}
-            >
-              <motion.div
-                className="w-6 h-6 rounded-full bg-white"
-                style={{ boxShadow: '0 1px 3px rgba(26,24,22,0.15)' }}
-                animate={{ x: notifications[item.key] ? 20 : 0 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              />
+      {/* ── THEME ─────────────────────────────────────────────────────────── */}
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 12px' }}>THEME</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+          {[
+            { key: 'light' as const, label: 'Light', icon: Sun },
+            { key: 'dark' as const, label: 'Dark', icon: Moon },
+            { key: 'system' as const, label: 'System', icon: Monitor },
+          ].map(t => (
+            <button key={t.key} onClick={() => setTheme(t.key)}
+              style={{
+                padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                background: state.theme === t.key ? '#D97757' : '#F5F0EB',
+                color: state.theme === t.key ? '#fff' : '#6B6560',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+                fontSize: 13, fontWeight: 600,
+              }}>
+              <t.icon style={{ width: 17, height: 17 }} />
+              {t.label}
             </button>
-          </div>
-        ))}
-      </div>
-
-      {/* App */}
-      <div className="rounded-2xl p-5 mb-4" style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-        <p className="text-[#8B8579] mb-3" style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.05em' }}>APP</p>
-        <div className="flex items-center justify-between py-3.5" style={{ borderBottom: '1px solid #F0EBE3' }}>
-          <span className="text-[#1A1816]" style={{ fontSize: 16 }}>Theme</span>
-          <div className="flex gap-1 rounded-lg p-1" style={{ background: '#F0EBE3' }}>
-            {[
-              { key: 'light', icon: Sun },
-              { key: 'dark', icon: Moon },
-              { key: 'system', icon: Monitor },
-            ].map(t => (
-              <button
-                key={t.key}
-                className="w-9 h-8 rounded-md flex items-center justify-center transition-all"
-                style={{ background: state.theme === t.key ? '#FFFFFF' : 'transparent', boxShadow: state.theme === t.key ? '0 1px 2px rgba(26,24,22,0.06)' : 'none' }}
-                onClick={() => setTheme(t.key as 'light' | 'dark' | 'system')}
-              >
-                <t.icon className="w-4 h-4" style={{ color: state.theme === t.key ? '#D97757' : '#8B8579' }} />
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
-        <div className="flex items-center justify-between py-3.5" style={{ borderBottom: '1px solid #F0EBE3' }}>
-          <span className="text-[#1A1816]" style={{ fontSize: 16 }}>Currency</span>
-          <span className="text-[#6B6560]" style={{ fontSize: 16 }}>₹ INR</span>
-        </div>
-
       </div>
 
-      {/* Logout & Danger */}
-      <div className="space-y-3">
-        <button
-          onClick={logout}
-          className="w-full py-4 rounded-xl flex items-center justify-center gap-2 text-[#6B6560] transition-all hover:bg-[#F5F0EB]"
-          style={{ fontSize: 16, fontWeight: 600, background: '#FFFFFF', border: '1px solid #E8E2D9' }}
-        >
-          <LogOut className="w-[18px] h-[18px]" /> Sign Out
-        </button>
-        <button
-          onClick={() => toast.error('This action cannot be undone!')}
-          className="w-full py-4 rounded-xl text-[#C45C4A] transition-all hover:bg-[#FBE9E5]"
-          style={{ fontSize: 16, fontWeight: 500, background: '#FBF0EE', border: '1px solid rgba(196,92,74,0.1)' }}
-        >
-          Clear All Data
-        </button>
-      </div>
+      {/* ── SIGN OUT ──────────────────────────────────────────────────────── */}
+      <button onClick={logout}
+        style={{ width: '100%', padding: '14px 0', borderRadius: 14, background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 600, color: '#C45C4A', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <LogOut style={{ width: 17, height: 17 }} /> Sign Out
+      </button>
 
-      {/* Vendor Sheet */}
+      {/* ── VENDOR SHEET ──────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showVendorSheet && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50"
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setShowVendorSheet(false)}
-            />
+              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }} />
             <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              style={{
-                width: '100%',
-                maxWidth: 430,
-                borderRadius: '24px 24px 0 0',
-                background: '#FFFFFF',
-                boxShadow: '0 -8px 30px rgba(26,24,22,0.1)',
-                pointerEvents: 'all',
-              }}
-            >
-              <div className="flex justify-center pt-3 pb-1">
-                <div className="w-10 h-1 rounded-full bg-[#E8E2D9]" />
-              </div>
-              <div className="px-6 pb-8">
-                <div className="flex items-center justify-between mb-5">
-                  <h3 className="text-[#1A1816]" style={{ fontSize: 22, fontWeight: 700 }}>
-                    {editingVendor ? 'Edit Vendor' : 'Add Vendor'}
-                  </h3>
-                  <button onClick={() => setShowVendorSheet(false)} className="p-1.5 rounded-lg hover:bg-[#F5F0EB]">
-                    <X className="w-5 h-5 text-[#8B8579]" />
+              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                style={{ width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0', background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)', padding: '20px 24px 44px', pointerEvents: 'all' }}>
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 18px' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: '#1A1816', margin: 0 }}>{editingVendor ? 'Edit Vendor' : 'Add Vendor'}</h3>
+                  <button onClick={() => setShowVendorSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <X style={{ width: 19, height: 19, color: '#8B8579' }} />
                   </button>
                 </div>
-                <div className="space-y-4">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
-                    <label className="text-[#6B6560] mb-1.5 block" style={{ fontSize: 15, fontWeight: 500 }}>Vendor Name</label>
-                    <input
-                      value={vendorName}
-                      onChange={e => setVendorName(e.target.value)}
-                      placeholder="e.g. Sharma Traders"
-                      className="w-full px-4 py-3.5 rounded-xl text-[#1A1816] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10"
-                      style={{ fontSize: 17, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
-                    />
+                    <label style={{ fontSize: 13, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Vendor Name</label>
+                    <input value={vendorName} onChange={e => setVendorName(e.target.value)} placeholder="e.g. F & F Decor"
+                      style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box' }} />
                   </div>
                   <div>
-                    <label className="text-[#6B6560] mb-1.5 block" style={{ fontSize: 15, fontWeight: 500 }}>Commission (%)</label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={vendorCut}
-                        onChange={e => setVendorCut(e.target.value)}
-                        placeholder="10"
-                        className="w-full px-4 py-3.5 rounded-xl text-[#1A1816] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10 pr-10"
-                        style={{ fontSize: 17, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
-                      />
-                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8B8579]" style={{ fontSize: 16 }}>%</span>
-                    </div>
+                    <label style={{ fontSize: 13, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Your Commission Cut (%)</label>
+                    <input type="number" value={vendorCut} onChange={e => setVendorCut(e.target.value)} placeholder="e.g. 10"
+                      style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box' }} />
                   </div>
+                  <motion.button whileTap={{ scale: 0.97 }} onClick={saveVendor}
+                    style={{ padding: '14px 0', borderRadius: 14, color: '#fff', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 16, fontWeight: 600, marginTop: 4 }}>
+                    {editingVendor ? 'Save Changes' : 'Add Vendor'}
+                  </motion.button>
                 </div>
-                <motion.button
-                  whileTap={{ scale: 0.98 }}
-                  onClick={saveVendor}
-                  className="w-full mt-6 py-4 rounded-xl text-white"
-                  style={{ background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 17, fontWeight: 600, boxShadow: '0 4px 14px rgba(217,119,87,0.3)' }}
-                >
-                  {editingVendor ? 'Update Vendor' : 'Save Vendor'}
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── GOOGLE DRIVE CONNECT SHEET ────────────────────────────────────── */}
+      <AnimatePresence>
+        {showDriveSheet && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowDriveSheet(false)}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                style={{ width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0', background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)', padding: '20px 24px 48px', pointerEvents: 'all' }}>
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 18px' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: '#1A1816', margin: 0 }}>Connect Google Drive</h3>
+                  <button onClick={() => setShowDriveSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <X style={{ width: 19, height: 19, color: '#8B8579' }} />
+                  </button>
+                </div>
+                <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 16px', lineHeight: 1.5 }}>
+                  Your bills & vendors will be saved to a <strong>"BillerPRO Data"</strong> folder in your own Google Drive — automatically, after every change.
+                </p>
+
+                {/* What gets synced */}
+                <div style={{ background: '#EEF5F0', borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#5C9A6F', margin: '0 0 6px' }}>What auto-syncs to your Drive:</p>
+                  {['Every bill scan → saved instantly as bill_xxxxx.json', 'Vendor list → saved to billerpro_vendors.json', 'Monthly targets → saved to billerpro_settings.json', 'You can open, view or delete files directly in Drive'].map((s, i) => (
+                    <p key={i} style={{ fontSize: 12, color: '#5C9A6F', margin: '0 0 3px', lineHeight: 1.5 }}>✓ {s}</p>
+                  ))}
+                </div>
+
+                {/* Setup steps */}
+                <div style={{ background: '#F5F0EB', borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', margin: '0 0 8px' }}>One-time setup (on laptop, 5 mins):</p>
+                  {[
+                    'Go to console.cloud.google.com',
+                    'New project → Enable "Google Drive API"',
+                    'Credentials → OAuth 2.0 Client ID → Web app',
+                    'Add https://biller-pro.vercel.app as allowed origin',
+                    'Copy Client ID below',
+                  ].map((s, i) => (
+                    <p key={i} style={{ fontSize: 12, color: '#6B6560', margin: '0 0 4px', lineHeight: 1.5 }}>{i + 1}. {s}</p>
+                  ))}
+                </div>
+
+                <label style={{ fontSize: 13, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Google OAuth Client ID</label>
+                <input value={driveClientIdInput || state.driveClientId}
+                  onChange={e => setDriveClientIdInput(e.target.value)}
+                  placeholder="xxxxxxx.apps.googleusercontent.com"
+                  style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 13, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box', fontFamily: 'monospace', marginBottom: 14 }} />
+
+                <motion.button whileTap={{ scale: 0.97 }}
+                  disabled={driveConnecting}
+                  onClick={async () => {
+                    const id = (driveClientIdInput || state.driveClientId).trim();
+                    if (!id.includes('googleusercontent.com')) { toast.error('Invalid Client ID'); return; }
+                    setDriveConnecting(true);
+                    try {
+                      await connectDrive(id);
+                      setDriveClientIdInput('');
+                      setShowDriveSheet(false);
+                      toast.success('Google Drive connected! Bills will auto-sync from now on.');
+                      // Immediately try to load existing data
+                      const ok = await loadFromDrive();
+                      if (ok) toast.success('Loaded existing data from your Drive!');
+                    } catch (e: any) {
+                      toast.error(e.message || 'Connection failed — check your Client ID');
+                    } finally {
+                      setDriveConnecting(false);
+                    }
+                  }}
+                  style={{
+                    width: '100%', padding: '14px 0', borderRadius: 14, color: '#fff', border: 'none', cursor: driveConnecting ? 'not-allowed' : 'pointer',
+                    background: driveConnecting ? '#9BB8F5' : 'linear-gradient(135deg, #4285F4, #2563EB)',
+                    fontSize: 15, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}>
+                  {driveConnecting
+                    ? <><Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> Connecting...</>
+                    : <><svg width="16" height="16" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57C21.36 18.52 22.56 15.59 22.56 12.25z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#fff"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff"/></svg> Sign in with Google</>}
                 </motion.button>
-              </div>
-            </motion.div>
+              </motion.div>
             </div>
           </>
         )}

@@ -1,43 +1,128 @@
 import React, { useState, useRef } from 'react';
-import { CloudUpload, FolderOpen, Camera, CheckCircle2, AlertTriangle, Loader2, Key, X, Eye, EyeOff } from 'lucide-react';
+import {
+  CloudUpload, FolderOpen, Camera, CheckCircle2,
+  AlertTriangle, Loader2, Key, X, Eye, EyeOff, ShieldCheck,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
 
-type Stage = 'upload' | 'processing' | 'review';
+type Stage = 'upload' | 'extracting' | 'processing' | 'review';
 type Confidence = 'high' | 'medium' | 'low';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
-// ── Claude API call ────────────────────────────────────────────────────────────
-async function extractBillData(
-  fileBase64: string,
-  mimeType: string,
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 1: LOCAL TEXT EXTRACTION from PDF using PDF.js (no server needed)
+// ─────────────────────────────────────────────────────────────────────────────
+async function extractTextFromPDF(file: File): Promise<string> {
+  // Load PDF.js from CDN if not already loaded
+  if (!(window as any).pdfjsLib) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = () => {
+        (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve();
+      };
+      script.onerror = () => reject(new Error('Failed to load PDF reader'));
+      document.head.appendChild(script);
+    });
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await (window as any).pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  let fullText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map((item: any) => item.str).join(' ');
+    fullText += pageText + '\n';
+  }
+  return fullText;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 2: MASK SENSITIVE FIELDS before sending anywhere
+// Removes: IFSC codes, bank account numbers, UPI IDs
+// ─────────────────────────────────────────────────────────────────────────────
+interface MaskResult {
+  maskedText: string;
+  maskedFields: string[]; // what was found and removed (for user display)
+}
+
+function maskSensitiveData(rawText: string): MaskResult {
+  let text = rawText;
+  const maskedFields: string[] = [];
+
+  // ── IFSC Code: 4 uppercase letters + 0 + 6 alphanumeric chars (e.g. KKBK0002864)
+  const ifscRegex = /\b[A-Z]{4}0[A-Z0-9]{6}\b/g;
+  const ifscMatches = text.match(ifscRegex) || [];
+  if (ifscMatches.length > 0) {
+    text = text.replace(ifscRegex, '[IFSC-MASKED]');
+    maskedFields.push('IFSC Code');
+  }
+
+  // ── Bank Account Number: 9–18 consecutive digits
+  // (but NOT amounts like 480.00 or dates like 26022026 — those are short or have dots/slashes)
+  // We look for standalone digit strings of length 9-18 NOT adjacent to . / , ₹ Rs
+  const acRegex = /(?<![.\\/,₹%])\b(\d{9,18})\b(?![.\\/,₹%])/g;
+  const acMatches = text.match(acRegex) || [];
+  if (acMatches.length > 0) {
+    text = text.replace(acRegex, '[ACCT-MASKED]');
+    maskedFields.push('Bank Account Number');
+  }
+
+  // ── UPI ID: anything@bankname (e.g. 9998083812@kotak)
+  const upiRegex = /[\w.+-]+@[a-zA-Z]+/g;
+  // Only mask if it looks like UPI (not an email in the company address)
+  const upiMatches = (text.match(upiRegex) || []).filter(u => !u.includes('.com') && !u.includes('.in'));
+  if (upiMatches.length > 0) {
+    upiMatches.forEach(u => { text = text.replace(u, '[UPI-MASKED]'); });
+    maskedFields.push('UPI ID');
+  }
+
+  // ── Bank Name standalone (extra safety — mask the value after "Bank Name :")
+  text = text.replace(/(Bank\s*Name\s*[:\-]?\s*)([A-Z][A-Za-z\s]+(?:Bank|BANK)[A-Za-z\s]*)/g,
+    '$1[BANK-MASKED]');
+
+  return { maskedText: text, maskedFields };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 3: SEND MASKED TEXT to Claude API for smart extraction
+// ─────────────────────────────────────────────────────────────────────────────
+async function extractWithClaude(
+  maskedText: string,
   apiKey: string,
   vendorNames: string[],
 ): Promise<{
   customerName: string;
   amount: string;
   date: string;
+  billNumber: string;
   vendorHint: string;
   confidence: { customerName: Confidence; amount: Confidence; date: Confidence };
 }> {
   const vendorList = vendorNames.length > 0
-    ? `\nKnown vendors in system: ${vendorNames.join(', ')}`
+    ? `Known vendors in system: ${vendorNames.join(', ')}`
     : '';
 
-  const prompt = `You are reading an Indian GST Tax Invoice (TAX INVOICE).
+  const prompt = `You are reading extracted text from an Indian GST Tax Invoice.
 ${vendorList}
 
-Extract these 4 fields ONLY. Return valid JSON, nothing else:
+The text below has already had sensitive fields masked for privacy. Extract ONLY these fields and return valid JSON:
 
 {
-  "customerName": "full name from Details of Receiver / Billed To section",
-  "amount": "Net Amount number only (the final total at bottom, no ₹ or Rs symbol)",
+  "customerName": "Name from 'Details of Receiver / Billed To' section",
+  "amount": "Net Amount as number only (final payable total, bottom of bill)",
   "date": "Invoice Date in YYYY-MM-DD format",
-  "vendorHint": "name of the company or party who ISSUED/PRINTED this bill (top of bill, not the receiver)",
+  "billNumber": "Invoice Number / Bill Number",
+  "vendorHint": "Company name at TOP of bill (the seller/issuer, NOT the receiver)",
   "confidence": {
     "customerName": "high|medium|low",
     "amount": "high|medium|low",
@@ -46,12 +131,15 @@ Extract these 4 fields ONLY. Return valid JSON, nothing else:
 }
 
 Rules:
-- customerName = the BUYER (Details of Receiver / Billed To / Name field). NOT the seller at top.
-- amount = Net Amount (final payable total including GST, usually bottom-right of bill)
-- date = Invoice Date (not LR Date or other dates)
-- vendorHint = company name at top of invoice (the SELLER/ISSUER, e.g. "F & F DECOR")
-- For date, if format is DD/MM/YYYY convert to YYYY-MM-DD
-- Return ONLY the JSON object, no explanation`;
+- customerName = the BUYER (Billed To / Receiver). NOT the company at the top.
+- amount = Net Amount (final total after GST, not taxable amount)
+- date = Invoice Date only. Convert DD/MM/YYYY to YYYY-MM-DD.
+- billNumber = Invoice No / Bill No number
+- vendorHint = the SELLER company at top (e.g. "F & F DECOR")
+- Return ONLY the JSON, no explanation, no markdown fences.
+
+BILL TEXT:
+${maskedText.slice(0, 4000)}`; // cap at 4000 chars to save tokens
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -61,136 +149,181 @@ Rules:
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-opus-4-6',
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: mimeType === 'application/pdf' ? 'document' : 'image',
-            source: {
-              type: 'base64',
-              media_type: mimeType,
-              data: fileBase64,
-            },
-          },
-          { type: 'text', text: prompt },
-        ],
-      }],
+      model: 'claude-haiku-4-5-20251001', // cheapest, plenty smart for this task
+      max_tokens: 400,
+      messages: [{ role: 'user', content: prompt }],
     }),
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    if (response.status === 401) throw new Error('Invalid API key. Check your key in Settings.');
-    if (response.status === 429) throw new Error('Too many requests. Wait a moment and try again.');
+    if (response.status === 401) throw new Error('Invalid API key. Check in Upload settings.');
+    if (response.status === 429) throw new Error('Too many requests — wait a moment and retry.');
     throw new Error(err?.error?.message || `API error ${response.status}`);
   }
 
   const data = await response.json();
   const text = data.content?.find((b: any) => b.type === 'text')?.text || '';
-
-  // Strip any markdown fences if present
   const clean = text.replace(/```json|```/gi, '').trim();
-  const parsed = JSON.parse(clean);
-  return parsed;
+  return JSON.parse(clean);
 }
 
-// ── File to base64 ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// For IMAGE bills: use Tesseract.js OCR locally → mask → send text to Claude
+// Tesseract runs 100% in the browser, no server, no image sent anywhere
+// ─────────────────────────────────────────────────────────────────────────────
+async function extractTextFromImage(file: File): Promise<string> {
+  // Load Tesseract.js from CDN if not already loaded
+  if (!(window as any).Tesseract) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load OCR engine'));
+      document.head.appendChild(script);
+    });
+  }
+
+  const Tesseract = (window as any).Tesseract;
+  const result = await Tesseract.recognize(file, 'eng', {
+    logger: () => {}, // suppress logs
+  });
+  return result.data.text;
+}
+
+async function extractFromImage(
+  file: File,
+  apiKey: string,
+  vendorNames: string[],
+): Promise<{ result: any; maskedFields: string[] }> {
+  // Step 1: OCR on device — image never leaves
+  const rawText = await extractTextFromImage(file);
+
+  // Step 2: Mask sensitive fields locally
+  const { maskedText, maskedFields } = maskSensitiveData(rawText);
+
+  // Step 3: Send only masked TEXT to Claude (not the image)
+  const result = await extractWithClaude(maskedText, apiKey, vendorNames);
+
+  return { result, maskedFields };
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Remove data URL prefix "data:...;base64,"
-      resolve(result.split(',')[1]);
-    };
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
 export function UploadBill() {
   const { state, addBill, getVendor, setActiveTab, setClaudeApiKey } = useApp();
+
   const [stage, setStage] = useState<Stage>('upload');
   const [showApiSheet, setShowApiSheet] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
   const [showKeyText, setShowKeyText] = useState(false);
   const [fileName, setFileName] = useState('');
+  const [maskedFields, setMaskedFields] = useState<string[]>([]);
+  const [stageLabel, setStageLabel] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Extracted fields (editable after scan)
+  // Extracted fields
   const [extractedDate, setExtractedDate] = useState('');
   const [extractedVendorId, setExtractedVendorId] = useState('');
   const [extractedCustomer, setExtractedCustomer] = useState('');
   const [extractedAmount, setExtractedAmount] = useState('');
+  const [extractedBillNo, setExtractedBillNo] = useState('');
+  const [vendorHint, setVendorHint] = useState('');
   const [confidence, setConfidence] = useState<{ customerName: Confidence; amount: Confidence; date: Confidence }>({
     customerName: 'high', amount: 'high', date: 'high',
   });
-  const [vendorHint, setVendorHint] = useState('');
 
   const selectedVendor = getVendor(extractedVendorId);
   const amount = parseFloat(extractedAmount) || 0;
   const cut = selectedVendor ? amount * selectedVendor.cutPercent / 100 : 0;
+  const hasApiKey = !!state.claudeApiKey;
 
-  // Auto-match vendor hint to known vendors (fuzzy)
   function matchVendor(hint: string): string {
     if (!hint || state.vendors.length === 0) return '';
     const h = hint.toLowerCase().trim();
-    // Exact match first
     const exact = state.vendors.find(v => v.name.toLowerCase() === h);
     if (exact) return exact.id;
-    // Partial match
     const partial = state.vendors.find(v =>
-      v.name.toLowerCase().includes(h) || h.includes(v.name.toLowerCase().split(' ')[0])
+      v.name.toLowerCase().includes(h.split(' ')[0]) ||
+      h.includes(v.name.toLowerCase().split(' ')[0])
     );
-    return partial?.id || '';
+    return partial?.id || state.vendors[0]?.id || '';
   }
 
-  // ── Handle file selected ─────────────────────────────────────────────────────
+  // ── Main file handler ──────────────────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file) return;
 
-    // Check API key
     if (!state.claudeApiKey) {
       setShowApiSheet(true);
-      toast.error('Please enter your Claude API key first');
+      toast.error('Set your API key first');
       return;
     }
 
     const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
-      toast.error('Please upload a PDF, JPG, or PNG file');
+      toast.error('Please upload a PDF, JPG, or PNG');
       return;
     }
-
     if (file.size > 20 * 1024 * 1024) {
       toast.error('File too large. Max 20MB.');
       return;
     }
 
     setFileName(file.name);
-    setStage('processing');
+    setMaskedFields([]);
 
     try {
-      const base64 = await fileToBase64(file);
-      const vendorNames = state.vendors.map(v => v.name);
-      const result = await extractBillData(base64, file.type, state.claudeApiKey, vendorNames);
+      let result: any;
+
+      if (file.type === 'application/pdf') {
+        // ── PDF FLOW: local extract → mask → Claude text ──────────────────
+        setStage('extracting');
+        setStageLabel('Reading PDF text locally...');
+        const rawText = await extractTextFromPDF(file);
+
+        setStageLabel('Masking sensitive fields...');
+        const { maskedText, maskedFields: mf } = maskSensitiveData(rawText);
+        setMaskedFields(mf);
+
+        setStage('processing');
+        setStageLabel('Sending to Claude AI...');
+        result = await extractWithClaude(maskedText, state.claudeApiKey, state.vendors.map(v => v.name));
+
+      } else {
+        // ── IMAGE FLOW: send to Claude with strict no-bank-data prompt ────
+        // IMAGE FLOW: OCR locally → mask → send text only to Claude
+        setStage('extracting');
+        setStageLabel('Reading image text on device (OCR)...');
+        const { result: imgResult, maskedFields: imgMf } = await extractFromImage(
+          file, state.claudeApiKey, state.vendors.map(v => v.name)
+        );
+        result = imgResult;
+        setMaskedFields(imgMf.length > 0 ? imgMf : ['No sensitive fields found']);
+      }
 
       // Set extracted values
       setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
       setExtractedCustomer(result.customerName || '');
       setExtractedAmount(result.amount || '');
+      setExtractedBillNo(result.billNumber || '');
       setVendorHint(result.vendorHint || '');
       setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
-
-      // Try to auto-match vendor
-      const matched = matchVendor(result.vendorHint || '');
-      setExtractedVendorId(matched || state.vendors[0]?.id || '');
-
+      setExtractedVendorId(matchVendor(result.vendorHint || ''));
       setStage('review');
+
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || 'Failed to read bill. Try again.');
@@ -198,7 +331,7 @@ export function UploadBill() {
     }
   }
 
-  // ── Save bill ────────────────────────────────────────────────────────────────
+  // ── Save bill ──────────────────────────────────────────────────────────────
   function saveBill() {
     if (!extractedVendorId) { toast.error('Please select a vendor'); return; }
     if (!extractedCustomer.trim()) { toast.error('Customer name is required'); return; }
@@ -211,259 +344,292 @@ export function UploadBill() {
       amount,
       date: extractedDate,
       confidence: confidence.amount,
-      notes: vendorHint ? `Issuer: ${vendorHint}` : undefined,
+      notes: [
+        vendorHint ? `Issuer: ${vendorHint}` : '',
+        extractedBillNo ? `Bill #${extractedBillNo}` : '',
+      ].filter(Boolean).join(' · ') || undefined,
     });
 
     toast.success(`Bill saved! Your cut: ${formatCurrency(Math.round(cut))} 🎉`);
+
+    // Reset
     setStage('upload');
     setFileName('');
+    setMaskedFields([]);
     setExtractedDate('');
     setExtractedVendorId('');
     setExtractedCustomer('');
     setExtractedAmount('');
+    setExtractedBillNo('');
+    setVendorHint('');
     setActiveTab('home');
   }
 
-  // ── Confidence badge ──────────────────────────────────────────────────────────
+  // ── Confidence icon ────────────────────────────────────────────────────────
   const ConfBadge = ({ level }: { level: Confidence }) => {
-    if (level === 'high') return <CheckCircle2 style={{ width: 16, height: 16, color: '#5C9A6F' }} />;
-    if (level === 'medium') return <AlertTriangle style={{ width: 16, height: 16, color: '#D4A853' }} />;
-    return <AlertTriangle style={{ width: 16, height: 16, color: '#C45C4A' }} />;
+    if (level === 'high') return <CheckCircle2 style={{ width: 15, height: 15, color: '#5C9A6F' }} />;
+    return <AlertTriangle style={{ width: 15, height: 15, color: '#D4A853' }} />;
   };
 
-  const hasApiKey = !!state.claudeApiKey;
-
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ padding: '24px 20px 100px' }}>
+
       {/* Header */}
       <div style={{ marginBottom: 24, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1A1816', margin: '0 0 4px' }}>Upload Bill</h2>
-          <p style={{ fontSize: 15, color: '#8B8579', margin: 0 }}>
-            {hasApiKey ? 'Tap to scan a bill with AI' : 'Set your API key to enable scanning'}
+          <p style={{ fontSize: 14, color: '#8B8579', margin: 0 }}>
+            {hasApiKey ? 'Bills are masked before AI scanning' : 'Set API key to enable scanning'}
           </p>
         </div>
-        {/* API Key button */}
-        <button
-          onClick={() => setShowApiSheet(true)}
+        <button onClick={() => setShowApiSheet(true)}
           style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 12px', borderRadius: 12, border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '7px 12px', borderRadius: 10, border: 'none', cursor: 'pointer',
             background: hasApiKey ? '#EEF5F0' : '#FDF5F0',
-            color: hasApiKey ? '#5C9A6F' : '#D97757',
-            fontSize: 13, fontWeight: 600,
-          }}
-        >
-          <Key style={{ width: 14, height: 14 }} />
-          {hasApiKey ? 'API ✓' : 'Set API Key'}
+            color: hasApiKey ? '#5C9A6F' : '#D97757', fontSize: 13, fontWeight: 600,
+          }}>
+          <Key style={{ width: 13, height: 13 }} />
+          {hasApiKey ? 'API ✓' : 'Set Key'}
         </button>
       </div>
 
       {/* Hidden file inputs */}
-      <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"
-        style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
-      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
-        style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+      <input ref={fileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
+        onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+        onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
 
       <AnimatePresence mode="wait">
 
-        {/* ── UPLOAD STAGE ── */}
+        {/* ── UPLOAD ── */}
         {stage === 'upload' && (
           <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
 
-            {/* Main drop area */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
+            <button onClick={() => fileInputRef.current?.click()}
               style={{
-                width: '100%', padding: '64px 0', borderRadius: 20,
-                border: `2px dashed ${hasApiKey ? '#D97757' : '#E8E2D9'}`,
+                width: '100%', padding: '56px 0', borderRadius: 20, cursor: 'pointer',
+                border: `2px dashed ${hasApiKey ? 'rgba(217,119,87,0.35)' : '#E8E2D9'}`,
                 background: hasApiKey ? '#FDF5F0' : '#F9F7F4',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: hasApiKey ? 'rgba(217,119,87,0.12)' : '#F0EBE3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CloudUpload style={{ width: 28, height: 28, color: hasApiKey ? '#D97757' : '#ADA79F' }} />
+              }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: hasApiKey ? 'rgba(217,119,87,0.12)' : '#F0EBE3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CloudUpload style={{ width: 26, height: 26, color: hasApiKey ? '#D97757' : '#ADA79F' }} />
               </div>
               <div style={{ textAlign: 'center' }}>
-                <p style={{ fontSize: 17, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>
-                  {hasApiKey ? 'Tap to upload PDF or photo' : 'Set API key to start scanning'}
+                <p style={{ fontSize: 16, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>
+                  {hasApiKey ? 'Tap to upload PDF or photo' : 'Set API key first'}
                 </p>
-                <p style={{ fontSize: 14, color: '#8B8579', margin: 0 }}>Supports PDF, JPG, PNG</p>
+                <p style={{ fontSize: 13, color: '#8B8579', margin: 0 }}>PDF, JPG, PNG supported</p>
               </div>
             </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
+            {/* Privacy badge */}
+            {hasApiKey && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0', padding: '10px 14px', borderRadius: 12, background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)' }}>
+                <ShieldCheck style={{ width: 16, height: 16, color: '#5C9A6F', flexShrink: 0 }} />
+                <p style={{ fontSize: 12, color: '#5C9A6F', margin: 0, lineHeight: 1.4 }}>
+                  <strong>Privacy protected:</strong> Bank account numbers & IFSC codes are automatically masked before any data is sent to AI
+                </p>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
               <div style={{ flex: 1, height: 1, background: '#E8E2D9' }} />
               <span style={{ fontSize: 13, color: '#C4BFB6', fontWeight: 500 }}>OR</span>
               <div style={{ flex: 1, height: 1, background: '#E8E2D9' }} />
             </div>
 
-            {/* Files + Camera */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               {[
-                { label: 'Choose File', sublabel: 'PDF or image', icon: FolderOpen, color: '#D97757', bg: '#FDF5F0', action: () => fileInputRef.current?.click() },
-                { label: 'Camera', sublabel: 'Photo of bill', icon: Camera, color: '#5C9A6F', bg: '#EEF5F0', action: () => cameraInputRef.current?.click() },
+                { label: 'Choose File', sub: 'PDF or image', icon: FolderOpen, color: '#D97757', bg: '#FDF5F0', action: () => fileInputRef.current?.click() },
+                { label: 'Camera', sub: 'Photo of bill', icon: Camera, color: '#5C9A6F', bg: '#EEF5F0', action: () => cameraInputRef.current?.click() },
               ].map(item => (
                 <button key={item.label} onClick={item.action}
                   style={{
-                    padding: '20px 0', borderRadius: 16, background: '#FFFFFF',
+                    padding: '18px 0', borderRadius: 14, background: '#FFFFFF',
                     boxShadow: '0 1px 3px rgba(26,24,22,0.06)', border: 'none', cursor: 'pointer',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9,
                   }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <item.icon style={{ width: 20, height: 20, color: item.color }} />
+                  <div style={{ width: 42, height: 42, borderRadius: 11, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <item.icon style={{ width: 19, height: 19, color: item.color }} />
                   </div>
                   <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: 14, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{item.label}</p>
-                    <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>{item.sublabel}</p>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{item.label}</p>
+                    <p style={{ fontSize: 11, color: '#8B8579', margin: 0 }}>{item.sub}</p>
                   </div>
                 </button>
               ))}
             </div>
-
-            {/* Info box */}
-            {hasApiKey && (
-              <div style={{ marginTop: 20, padding: '14px 16px', borderRadius: 14, background: '#F5F0EB', border: '1px solid #E8E2D9' }}>
-                <p style={{ fontSize: 13, color: '#6B6560', margin: 0, lineHeight: 1.5 }}>
-                  💡 <strong>How it works:</strong> Upload any bill PDF or photo → AI reads customer name, amount & date → Review → Save. Your cut is calculated instantly.
-                </p>
-              </div>
-            )}
           </motion.div>
         )}
 
-        {/* ── PROCESSING STAGE ── */}
-        {stage === 'processing' && (
+        {/* ── EXTRACTING / PROCESSING ── */}
+        {(stage === 'extracting' || stage === 'processing') && (
           <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingBottom: 80 }}>
-            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }} style={{ marginBottom: 24 }}>
-              <Loader2 style={{ width: 52, height: 52, color: '#D97757' }} />
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 64, paddingBottom: 64 }}>
+
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }} style={{ marginBottom: 20 }}>
+              <Loader2 style={{ width: 48, height: 48, color: '#D97757' }} />
             </motion.div>
-            <p style={{ fontSize: 20, fontWeight: 600, color: '#1A1816', margin: '0 0 8px' }}>Reading your bill...</p>
-            <p style={{ fontSize: 15, color: '#8B8579', margin: '0 0 8px' }}>AI is scanning and extracting details</p>
-            {fileName && <p style={{ fontSize: 13, color: '#C4BFB6', margin: 0 }}>{fileName}</p>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-              {[0,1,2].map(i => (
-                <motion.div key={i} style={{ width: 10, height: 10, borderRadius: '50%', background: '#D97757' }}
-                  animate={{ opacity: [0.2, 1, 0.2] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.3 }} />
+
+            <p style={{ fontSize: 18, fontWeight: 600, color: '#1A1816', margin: '0 0 8px', textAlign: 'center' }}>
+              {stage === 'extracting' ? 'Reading bill locally...' : 'AI extracting details...'}
+            </p>
+            <p style={{ fontSize: 14, color: '#8B8579', margin: '0 0 4px', textAlign: 'center' }}>{stageLabel}</p>
+            {fileName && <p style={{ fontSize: 12, color: '#C4BFB6', margin: 0 }}>{fileName}</p>}
+
+            {/* Step progress */}
+            <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 280 }}>
+              {[
+                { label: 'Read text on device (no upload)', done: stage === 'processing' || stage === 'review' },
+                { label: 'Mask bank account & IFSC code', done: stage === 'processing' || stage === 'review' },
+                { label: 'Send clean text to Claude AI', done: stage === 'review' },
+              ].map((step, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                    background: step.done ? '#5C9A6F' : (i === (stage === 'extracting' ? 0 : 1) ? '#D97757' : '#E8E2D9'),
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {step.done
+                      ? <CheckCircle2 style={{ width: 13, height: 13, color: '#fff' }} />
+                      : <span style={{ fontSize: 11, color: '#fff', fontWeight: 700 }}>{i + 1}</span>}
+                  </div>
+                  <span style={{ fontSize: 13, color: step.done ? '#5C9A6F' : '#8B8579', fontWeight: step.done ? 500 : 400 }}>
+                    {step.label}
+                  </span>
+                </div>
               ))}
             </div>
           </motion.div>
         )}
 
-        {/* ── REVIEW STAGE ── */}
+        {/* ── REVIEW ── */}
         {stage === 'review' && (
           <motion.div key="review" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}>
 
+            {/* Privacy confirmation */}
+            {maskedFields.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 14px', borderRadius: 12, background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)', marginBottom: 14 }}>
+                <ShieldCheck style={{ width: 15, height: 15, color: '#5C9A6F', flexShrink: 0, marginTop: 1 }} />
+                <p style={{ fontSize: 12, color: '#5C9A6F', margin: 0, lineHeight: 1.5 }}>
+                  <strong>Masked before sending:</strong> {maskedFields.join(', ')}
+                </p>
+              </div>
+            )}
+
             {/* File badge */}
-            <div style={{ padding: '12px 14px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ width: 40, height: 48, borderRadius: 8, background: '#F5F0EB', border: '1px solid #E8E2D9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#8B8579' }}>PDF</span>
+            <div style={{ padding: '12px 14px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 38, height: 46, borderRadius: 8, background: '#F5F0EB', border: '1px solid #E8E2D9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#8B8579' }}>PDF</span>
               </div>
               <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 15, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{fileName || 'Bill scanned'}</p>
-                {vendorHint && <p style={{ fontSize: 13, color: '#8B8579', margin: 0 }}>Issued by: {vendorHint}</p>}
+                <p style={{ fontSize: 14, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{fileName}</p>
+                {vendorHint && <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>Issuer: {vendorHint}{extractedBillNo ? ` · Bill #${extractedBillNo}` : ''}</p>}
               </div>
-              <CheckCircle2 style={{ width: 20, height: 20, color: '#5C9A6F' }} />
+              <CheckCircle2 style={{ width: 18, height: 18, color: '#5C9A6F' }} />
             </div>
 
-            <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 12px', fontWeight: 500 }}>
-              Review extracted details — tap any field to edit
+            <p style={{ fontSize: 12, color: '#ADA79F', margin: '0 0 10px', fontWeight: 500 }}>
+              Review & edit if needed — then save
             </p>
 
-            {/* Fields */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
               {/* Date */}
-              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Invoice Date</label>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Invoice Date</label>
                   <ConfBadge level={confidence.date} />
                 </div>
                 <input type="date" value={extractedDate} onChange={e => setExtractedDate(e.target.value)}
-                  style={{ width: '100%', fontSize: 17, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                  style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
               </div>
 
+              {/* Bill number */}
+              {extractedBillNo && (
+                <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579', display: 'block', marginBottom: 5 }}>Bill / Invoice No.</label>
+                  <input value={extractedBillNo} onChange={e => setExtractedBillNo(e.target.value)}
+                    style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                </div>
+              )}
+
               {/* Vendor */}
-              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Vendor (who pays your cut)</label>
-                  {selectedVendor
-                    ? <CheckCircle2 style={{ width: 16, height: 16, color: '#5C9A6F' }} />
-                    : <AlertTriangle style={{ width: 16, height: 16, color: '#D4A853' }} />}
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Vendor (who pays your cut)</label>
+                  {selectedVendor ? <CheckCircle2 style={{ width: 15, height: 15, color: '#5C9A6F' }} /> : <AlertTriangle style={{ width: 15, height: 15, color: '#D4A853' }} />}
                 </div>
                 {state.vendors.length > 0 ? (
                   <select value={extractedVendorId} onChange={e => setExtractedVendorId(e.target.value)}
-                    style={{ width: '100%', fontSize: 17, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }}>
+                    style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }}>
                     <option value="">— Select vendor —</option>
                     {state.vendors.map(v => <option key={v.id} value={v.id}>{v.name} ({v.cutPercent}%)</option>)}
                   </select>
                 ) : (
-                  <p style={{ fontSize: 15, color: '#C45C4A', margin: 0 }}>No vendors yet — add one in Settings first</p>
+                  <p style={{ fontSize: 14, color: '#C45C4A', margin: 0 }}>No vendors — add one in Settings first</p>
                 )}
               </div>
 
               {/* Customer */}
-              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Customer (billed to)</label>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Customer (billed to)</label>
                   <ConfBadge level={confidence.customerName} />
                 </div>
-                <input value={extractedCustomer} onChange={e => setExtractedCustomer(e.target.value)}
-                  placeholder="Customer name"
-                  style={{ width: '100%', fontSize: 17, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                <input value={extractedCustomer} onChange={e => setExtractedCustomer(e.target.value)} placeholder="Customer name"
+                  style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
               </div>
 
               {/* Amount */}
-              <div style={{ padding: '14px 16px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontSize: 13, fontWeight: 500, color: '#8B8579' }}>Net Amount (total bill)</label>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Net Amount (final total)</label>
                   <ConfBadge level={confidence.amount} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 22, color: '#8B8579' }}>₹</span>
+                  <span style={{ fontSize: 20, color: '#8B8579' }}>₹</span>
                   <input type="number" value={extractedAmount} onChange={e => setExtractedAmount(e.target.value)}
                     style={{ flex: 1, fontSize: 26, fontWeight: 700, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
                 </div>
               </div>
             </div>
 
-            {/* Your cut preview */}
+            {/* Cut preview */}
             {selectedVendor && amount > 0 && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-                style={{ marginTop: 14, padding: '16px 18px', borderRadius: 14, background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)' }}
-              >
+              <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
+                style={{ marginTop: 12, padding: '14px 16px', borderRadius: 13, background: '#EEF5F0', border: '1px solid rgba(92,154,111,0.2)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontSize: 13, color: '#5C9A6F', margin: '0 0 2px', fontWeight: 500 }}>
-                      {selectedVendor.cutPercent}% cut from {selectedVendor.name}
+                      Your {selectedVendor.cutPercent}% cut from {selectedVendor.name}
                     </p>
                     <p style={{ fontSize: 11, color: '#8B8579', margin: 0 }}>
                       ₹{amount.toLocaleString('en-IN')} × {selectedVendor.cutPercent}%
                     </p>
                   </div>
-                  <p style={{ fontSize: 22, fontWeight: 700, color: '#5C9A6F', margin: 0 }}>
+                  <p style={{ fontSize: 24, fontWeight: 700, color: '#5C9A6F', margin: 0 }}>
                     {formatCurrency(Math.round(cut))}
                   </p>
                 </div>
               </motion.div>
             )}
 
-            {/* Action buttons */}
-            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Save / retry */}
+            <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
               <motion.button whileTap={{ scale: 0.97 }} onClick={saveBill}
                 style={{
-                  width: '100%', padding: '16px 0', borderRadius: 16, color: '#FFFFFF', border: 'none', cursor: 'pointer',
+                  width: '100%', padding: '15px 0', borderRadius: 15, color: '#FFFFFF', border: 'none', cursor: 'pointer',
                   background: 'linear-gradient(135deg, #5C9A6F, #4A8A5D)',
-                  fontSize: 17, fontWeight: 600, boxShadow: '0 4px 14px rgba(92,154,111,0.3)',
+                  fontSize: 16, fontWeight: 600, boxShadow: '0 4px 14px rgba(92,154,111,0.3)',
                 }}>
                 Save Bill ✓
               </motion.button>
-              <button onClick={() => { setStage('upload'); setFileName(''); }}
-                style={{ width: '100%', padding: '14px 0', borderRadius: 16, color: '#6B6560', background: 'transparent', border: '1px solid #E8E2D9', fontSize: 15, fontWeight: 500, cursor: 'pointer' }}>
+              <button onClick={() => { setStage('upload'); setFileName(''); setMaskedFields([]); }}
+                style={{ width: '100%', padding: '13px 0', borderRadius: 15, color: '#6B6560', background: 'transparent', border: '1px solid #E8E2D9', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
                 Upload Different Bill
               </button>
             </div>
@@ -472,73 +638,48 @@ export function UploadBill() {
 
       </AnimatePresence>
 
-      {/* ── API KEY BOTTOM SHEET ─────────────────────────────────────────── */}
+      {/* ── API KEY SHEET ─────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showApiSheet && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setShowApiSheet(false)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }}
-            />
+              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }} />
             <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
               <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                style={{
-                  width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0',
-                  background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
-                  padding: '20px 24px 40px', pointerEvents: 'all',
-                }}
-              >
-                {/* Handle bar */}
+                style={{ width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0', background: '#FFFFFF', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)', padding: '20px 24px 44px', pointerEvents: 'all' }}>
+
                 <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 20px' }} />
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <h3 style={{ fontSize: 20, fontWeight: 700, color: '#1A1816', margin: 0 }}>Claude API Key</h3>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: '#1A1816', margin: 0 }}>Claude API Key</h3>
                   <button onClick={() => setShowApiSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                    <X style={{ width: 20, height: 20, color: '#8B8579' }} />
+                    <X style={{ width: 19, height: 19, color: '#8B8579' }} />
                   </button>
                 </div>
-                <p style={{ fontSize: 14, color: '#8B8579', margin: '0 0 20px', lineHeight: 1.5 }}>
-                  Required for AI bill scanning. Your key is saved only on this device.
+                <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 16px', lineHeight: 1.5 }}>
+                  Needed for AI bill scanning. Saved only on this device.
                 </p>
 
-                {/* Step guide */}
-                <div style={{ padding: '14px 16px', borderRadius: 12, background: '#F5F0EB', marginBottom: 16 }}>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6560', margin: '0 0 8px' }}>How to get your API key:</p>
-                  {[
-                    '1. Open console.anthropic.com on your laptop',
-                    '2. Sign up (free) or log in',
-                    '3. Click "API Keys" → "Create Key"',
-                    '4. Copy the key starting with sk-ant-...',
-                    '5. Paste it below and tap Save',
-                  ].map((step, i) => (
-                    <p key={i} style={{ fontSize: 13, color: '#6B6560', margin: '0 0 4px', lineHeight: 1.5 }}>{step}</p>
+                <div style={{ background: '#F5F0EB', borderRadius: 11, padding: '12px 14px', marginBottom: 14 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', margin: '0 0 8px' }}>How to get your key:</p>
+                  {['1. Open console.anthropic.com on laptop', '2. Sign up free → API Keys → Create Key', '3. Copy key starting with sk-ant-...', '4. Paste below and tap Save'].map((s, i) => (
+                    <p key={i} style={{ fontSize: 12, color: '#6B6560', margin: '0 0 3px' }}>{s}</p>
                   ))}
-                  <p style={{ fontSize: 12, color: '#ADA79F', margin: '8px 0 0', lineHeight: 1.4 }}>
-                    Free tier gives $5 credit (~500 bills). Each scan costs ~$0.01.
-                  </p>
+                  <p style={{ fontSize: 11, color: '#ADA79F', margin: '8px 0 0' }}>~₹0.01 per bill scan · Free $5 credit to start</p>
                 </div>
 
-                {/* Input */}
-                <div style={{ position: 'relative', marginBottom: 14 }}>
-                  <input
-                    type={showKeyText ? 'text' : 'password'}
+                <div style={{ position: 'relative', marginBottom: 12 }}>
+                  <input type={showKeyText ? 'text' : 'password'}
                     value={tempApiKey || state.claudeApiKey}
                     onChange={e => setTempApiKey(e.target.value)}
                     placeholder="sk-ant-api03-..."
-                    style={{
-                      width: '100%', padding: '14px 44px 14px 16px', borderRadius: 12, fontSize: 15,
-                      background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none',
-                      color: '#1A1816', boxSizing: 'border-box', fontFamily: 'monospace',
-                    }}
-                  />
+                    style={{ width: '100%', padding: '13px 44px 13px 15px', borderRadius: 11, fontSize: 14, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box', fontFamily: 'monospace' }} />
                   <button onClick={() => setShowKeyText(s => !s)}
                     style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                    {showKeyText
-                      ? <EyeOff style={{ width: 18, height: 18, color: '#8B8579' }} />
-                      : <Eye style={{ width: 18, height: 18, color: '#8B8579' }} />}
+                    {showKeyText ? <EyeOff style={{ width: 17, height: 17, color: '#8B8579' }} /> : <Eye style={{ width: 17, height: 17, color: '#8B8579' }} />}
                   </button>
                 </div>
 
@@ -550,18 +691,14 @@ export function UploadBill() {
                       setClaudeApiKey(key);
                       setTempApiKey('');
                       setShowApiSheet(false);
-                      toast.success('API key saved! Ready to scan bills.');
+                      toast.success('API key saved! Ready to scan.');
                     }}
-                    style={{
-                      flex: 1, padding: '14px 0', borderRadius: 14, color: '#FFFFFF', border: 'none', cursor: 'pointer',
-                      background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 16, fontWeight: 600,
-                    }}>
+                    style={{ flex: 1, padding: '13px 0', borderRadius: 13, color: '#FFFFFF', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 15, fontWeight: 600 }}>
                     Save Key
                   </motion.button>
                   {state.claudeApiKey && (
-                    <button
-                      onClick={() => { setClaudeApiKey(''); setTempApiKey(''); setShowApiSheet(false); toast.success('API key removed'); }}
-                      style={{ padding: '14px 16px', borderRadius: 14, color: '#C45C4A', background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                    <button onClick={() => { setClaudeApiKey(''); setTempApiKey(''); setShowApiSheet(false); toast.success('Key removed'); }}
+                      style={{ padding: '13px 16px', borderRadius: 13, color: '#C45C4A', background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
                       Remove
                     </button>
                   )}
