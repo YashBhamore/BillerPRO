@@ -57,11 +57,11 @@ interface MaskResult {
 
 function quickExtractBillNumber(rawText: string): string | null {
   const patterns = [
-    /Invoice\s*No\.?\s*[:#]?\s*(\w+)/i,
-    /Bill\s*No\.?\s*[:#]?\s*(\w+)/i,
-    /Invoice\s*Number\s*[:#]?\s*(\w+)/i,
-    /Inv\.?\s*No\.?\s*[:#]?\s*(\w+)/i,
-    /Receipt\s*No\.?\s*[:#]?\s*(\w+)/i,
+    /Invoice\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
+    /Bill\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
+    /Invoice\s*Number\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
+    /Inv\.?\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
+    /Receipt\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
   ];
   for (const pattern of patterns) {
     const match = rawText.match(pattern);
@@ -188,6 +188,32 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function extractSavedBillNo(notes?: string): string | null {
+  if (!notes) return null;
+  const match = notes.match(/Bill\s*#\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i);
+  return match?.[1]?.trim() || null;
+}
+
+function normalizeBillNo(value: string): string {
+  const compact = value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!compact) return '';
+  if (/^\d+$/.test(compact)) return compact.replace(/^0+/, '') || '0';
+  return compact;
+}
+
+function findDuplicateBillByNumber(
+  bills: Array<{ notes?: string }>,
+  candidateBillNo: string,
+) {
+  const normalizedCandidate = normalizeBillNo(candidateBillNo);
+  if (!normalizedCandidate) return null;
+  return bills.find((b) => {
+    const saved = extractSavedBillNo(b.notes);
+    if (!saved) return false;
+    return normalizeBillNo(saved) === normalizedCandidate;
+  }) || null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,14 +279,7 @@ export function UploadBill() {
       setStageLabel('Checking for duplicate bill...');
       const quickBillNo = quickExtractBillNumber(rawText);
       if (quickBillNo) {
-        const normalizedBillNo = quickBillNo.replace(/^0+/, '');
-        const existing = state.bills.find((b) => {
-          const notes = b.notes || '';
-          return (
-            notes.includes(`Bill #${quickBillNo}`) ||
-            (normalizedBillNo.length > 0 && notes.includes(`Bill #${normalizedBillNo}`))
-          );
-        });
+        const existing = findDuplicateBillByNumber(state.bills, quickBillNo);
         if (existing) {
           setDuplicateBill({ billNo: quickBillNo, existingBill: existing });
           setPendingFile(file);
@@ -334,6 +353,13 @@ export function UploadBill() {
     if (!extractedCustomer.trim()) { toast.error('Customer name is required'); return; }
     if (amount <= 0) { toast.error('Bill amount must be greater than 0'); return; }
     if (!extractedDate) { toast.error('Please enter the bill date'); return; }
+    if (extractedBillNo.trim()) {
+      const existing = findDuplicateBillByNumber(state.bills, extractedBillNo);
+      if (existing) {
+        toast.error(`Bill #${extractedBillNo} already exists. Change bill number before saving.`);
+        return;
+      }
+    }
 
     addBill({
       vendorId: extractedVendorId,
