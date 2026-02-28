@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
 
-type Stage = 'upload' | 'extracting' | 'processing' | 'review';
+type Stage = 'upload' | 'extracting' | 'processing' | 'review' | 'duplicate';
 type Confidence = 'high' | 'medium' | 'low';
 
 function formatCurrency(val: number) {
@@ -53,6 +53,23 @@ async function extractTextFromPDF(file: File): Promise<string> {
 interface MaskResult {
   maskedText: string;
   maskedFields: string[]; // what was found and removed (for user display)
+}
+
+function quickExtractBillNumber(rawText: string): string | null {
+  const patterns = [
+    /Invoice\s*No\.?\s*[:#]?\s*(\w+)/i,
+    /Bill\s*No\.?\s*[:#]?\s*(\w+)/i,
+    /Invoice\s*Number\s*[:#]?\s*(\w+)/i,
+    /Inv\.?\s*No\.?\s*[:#]?\s*(\w+)/i,
+    /Receipt\s*No\.?\s*[:#]?\s*(\w+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = rawText.match(pattern);
+    if (match && match[1] && match[1].length >= 2) {
+      return match[1].trim();
+    }
+  }
+  return null;
 }
 
 function maskSensitiveData(rawText: string): MaskResult {
@@ -174,6 +191,8 @@ function fileToBase64(file: File): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
+type DuplicateInfo = { billNo: string; existingBill: any };
+
 export function UploadBill() {
   const { state, addBill, getVendor, setActiveTab } = useApp();
 
@@ -181,6 +200,8 @@ export function UploadBill() {
   const [fileName, setFileName] = useState('');
   const [maskedFields, setMaskedFields] = useState<string[]>([]);
   const [stageLabel, setStageLabel] = useState('');
+  const [duplicateBill, setDuplicateBill] = useState<DuplicateInfo | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -212,6 +233,52 @@ export function UploadBill() {
     return partial?.id || state.vendors[0]?.id || '';
   }
 
+  function applyExtractionResult(result: any) {
+    setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
+    setExtractedCustomer(result.customerName || '');
+    setExtractedAmount(result.amount || '');
+    setExtractedBillNo(result.billNumber || '');
+    setVendorHint(result.vendorHint || '');
+    setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
+    setExtractedVendorId(matchVendor(result.vendorHint || ''));
+    setStage('review');
+  }
+
+  async function processPdfFile(file: File, skipDuplicateCheck = false): Promise<any | null> {
+    setStage('extracting');
+    setStageLabel('Reading PDF text locally...');
+    const rawText = await extractTextFromPDF(file);
+
+    if (!skipDuplicateCheck) {
+      setStageLabel('Checking for duplicate bill...');
+      const quickBillNo = quickExtractBillNumber(rawText);
+      if (quickBillNo) {
+        const normalizedBillNo = quickBillNo.replace(/^0+/, '');
+        const existing = state.bills.find((b) => {
+          const notes = b.notes || '';
+          return (
+            notes.includes(`Bill #${quickBillNo}`) ||
+            (normalizedBillNo.length > 0 && notes.includes(`Bill #${normalizedBillNo}`))
+          );
+        });
+        if (existing) {
+          setDuplicateBill({ billNo: quickBillNo, existingBill: existing });
+          setPendingFile(file);
+          setStage('duplicate');
+          return null;
+        }
+      }
+    }
+
+    setStageLabel('Masking sensitive fields...');
+    const { maskedText, maskedFields: mf } = maskSensitiveData(rawText);
+    setMaskedFields(mf);
+
+    setStage('processing');
+    setStageLabel('Sending to Claude AI...');
+    return extractWithClaude(maskedText, '', state.vendors.map(v => v.name));
+  }
+
   // ── Main file handler ──────────────────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file) return;
@@ -228,23 +295,17 @@ export function UploadBill() {
 
     setFileName(file.name);
     setMaskedFields([]);
+    setDuplicateBill(null);
+    setPendingFile(null);
 
     try {
       let result: any;
 
       if (file.type === 'application/pdf') {
-        // ── PDF FLOW: local extract → mask → Claude text ──────────────────
-        setStage('extracting');
-        setStageLabel('Reading PDF text locally...');
-        const rawText = await extractTextFromPDF(file);
-
-        setStageLabel('Masking sensitive fields...');
-        const { maskedText, maskedFields: mf } = maskSensitiveData(rawText);
-        setMaskedFields(mf);
-
-        setStage('processing');
-        setStageLabel('Sending to Claude AI...');
-        result = await extractWithClaude(maskedText, '', state.vendors.map(v => v.name));
+        // ── PDF FLOW: local extract → duplicate check → mask → Claude text ─
+        const pdfResult = await processPdfFile(file);
+        if (!pdfResult) return;
+        result = pdfResult;
 
       } else {
         // ── IMAGE FLOW: send to Claude with strict no-bank-data prompt ────
@@ -258,15 +319,7 @@ export function UploadBill() {
         setMaskedFields(imgMf.length > 0 ? imgMf : ['No sensitive fields found']);
       }
 
-      // Set extracted values
-      setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
-      setExtractedCustomer(result.customerName || '');
-      setExtractedAmount(result.amount || '');
-      setExtractedBillNo(result.billNumber || '');
-      setVendorHint(result.vendorHint || '');
-      setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
-      setExtractedVendorId(matchVendor(result.vendorHint || ''));
-      setStage('review');
+      applyExtractionResult(result);
 
     } catch (err: any) {
       console.error(err);
@@ -444,6 +497,63 @@ export function UploadBill() {
                   </span>
                 </div>
               ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── DUPLICATE WARNING ── */}
+        {stage === 'duplicate' && duplicateBill && (
+          <motion.div key="duplicate" initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 32 }}>
+
+            <div style={{ width: 72, height: 72, borderRadius: 20, background: '#FBF5E8', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+              <span style={{ fontSize: 36 }}>⚠️</span>
+            </div>
+
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: '#1A1816', margin: '0 0 8px', textAlign: 'center' }}>
+              Same Bill Already Exists!
+            </h3>
+            <p style={{ fontSize: 14, color: '#8B8579', margin: '0 0 24px', textAlign: 'center', lineHeight: 1.6 }}>
+              Bill <strong style={{ color: '#D97757' }}>#{duplicateBill.billNo}</strong> was already scanned and saved.
+              Uploading it again would waste an API credit.
+            </p>
+
+            <div style={{ width: '100%', padding: '16px', borderRadius: 14, background: '#FDF5F0', border: '1px solid rgba(217,119,87,0.2)', marginBottom: 24 }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: '#8B8579', margin: '0 0 8px', letterSpacing: '0.05em' }}>EXISTING SAVED BILL</p>
+              <p style={{ fontSize: 15, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>{duplicateBill.existingBill.customerName}</p>
+              <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 4px' }}>
+                {formatCurrency(duplicateBill.existingBill.amount)} · {duplicateBill.existingBill.date}
+              </p>
+              <p style={{ fontSize: 12, color: '#ADA79F', margin: 0 }}>{duplicateBill.existingBill.notes}</p>
+            </div>
+
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button
+                onClick={() => { setStage('upload'); setFileName(''); setDuplicateBill(null); setPendingFile(null); }}
+                style={{ width: '100%', padding: '15px 0', borderRadius: 15, color: '#fff', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #5C9A6F, #4A8A5D)', fontSize: 16, fontWeight: 600 }}>
+                Go Back (Recommended)
+              </button>
+              <button
+                onClick={async () => {
+                  if (!pendingFile) return;
+                  const file = pendingFile;
+                  setDuplicateBill(null);
+                  setPendingFile(null);
+                  try {
+                    const result = await processPdfFile(file, true);
+                    if (!result) {
+                      setStage('upload');
+                      return;
+                    }
+                    applyExtractionResult(result);
+                  } catch (err: any) {
+                    toast.error(err.message || 'Failed. Try again.');
+                    setStage('upload');
+                  }
+                }}
+                style={{ width: '100%', padding: '13px 0', borderRadius: 15, color: '#C45C4A', background: 'transparent', border: '1px solid #E8E2D9', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+                Scan Anyway (Uses API Credit)
+              </button>
             </div>
           </motion.div>
         )}
