@@ -18,6 +18,7 @@ const FOLDER_NAME = 'BillerPRO Data';
 const BILLS_SUBFOLDER = 'bills';
 const VENDORS_FILE = 'billerpro_vendors.json';
 const SETTINGS_FILE = 'billerpro_settings.json';
+const DRIVE_EMAIL_HINT_KEY = 'billerpro_drive_email';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 
@@ -46,12 +47,19 @@ export async function initDrive(clientId) {
   ]);
   await new Promise(r => (window).gapi.load('client', r));
   await (window).gapi.client.init({ discoveryDocs: [DISCOVERY] });
+  const storedEmail = localStorage.getItem(DRIVE_EMAIL_HINT_KEY) || '';
   _tokenClient = (window).google.accounts.oauth2.initTokenClient({
-    client_id: clientId, scope: SCOPE, callback: '',
+    client_id: clientId,
+    scope: SCOPE,
+    callback: '',
+    ...(storedEmail ? { hint: storedEmail } : {}),
   });
   _inited = true;
   _accessToken = await _getToken();
   const userInfo = await _apiFetch('https://www.googleapis.com/oauth2/v2/userinfo');
+  if (userInfo?.email) {
+    localStorage.setItem(DRIVE_EMAIL_HINT_KEY, userInfo.email);
+  }
   _rootFolderId = await _getOrCreateFolder(FOLDER_NAME, 'root');
   _billsFolderId = await _getOrCreateFolder(BILLS_SUBFOLDER, _rootFolderId);
   return {
@@ -72,7 +80,11 @@ function _getToken() {
       resolve(resp.access_token);
     };
     const existing = (window).gapi.client.getToken();
-    _tokenClient.requestAccessToken({ prompt: existing ? '' : 'consent' });
+    const storedEmail = localStorage.getItem(DRIVE_EMAIL_HINT_KEY) || '';
+    _tokenClient.requestAccessToken({
+      prompt: existing ? '' : 'select_account',
+      ...(storedEmail ? { hint: storedEmail } : {}),
+    });
   });
 }
 
