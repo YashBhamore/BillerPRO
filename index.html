@@ -3,16 +3,43 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+    <!-- PWA Manifest — critical for Android standalone install -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme & status bar -->
     <meta name="theme-color" content="#D97757" />
-    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="background-color" content="#FAF9F6" />
+
+    <!-- iOS PWA -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="BillerPRO" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+    <!-- Favicon -->
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" />
+
+    <!-- App meta -->
+    <meta name="description" content="Track your bills. Know your earnings." />
+    <meta name="application-name" content="BillerPRO" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
     <title>BillerPRO</title>
-    <link rel="manifest" href="/manifest.json" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root" style="height:100dvh;width:100%;"></div>
     <script type="module" src="/src/main.tsx"></script>
+
+    <!-- Register Service Worker -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.log('SW failed:', err));
+        });
+      }
+    </script>
   </body>
 </html>
