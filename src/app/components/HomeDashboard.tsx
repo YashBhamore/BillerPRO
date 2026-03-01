@@ -59,8 +59,10 @@ export function HomeDashboard() {
   };
   const saveVendor = () => {
     if (!vendorName || !vendorCut) { toast.error('Fill all fields'); return; }
-    if (editingVendor) { updateVendor(editingVendor, vendorName, parseFloat(vendorCut)); toast.success('Vendor updated'); }
-    else { addVendor(vendorName, parseFloat(vendorCut)); toast.success('Vendor added'); }
+    const cut = parseFloat(vendorCut);
+    if (isNaN(cut) || cut <= 0 || cut > 100) { toast.error('Cut % must be between 1 and 100'); return; }
+    if (editingVendor) { updateVendor(editingVendor, vendorName, cut); toast.success('Vendor updated'); }
+    else { addVendor(vendorName, cut); toast.success('Vendor added'); }
     setShowVendorSheet(false);
   };
 
