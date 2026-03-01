@@ -9,6 +9,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { exportToCSV, exportMonthToCSV } from '../store';
 
+const GOOGLE_DRIVE_CLIENT_ID = '942319788668-b27a9b61f6ob52cs4d27ludi99s9ou2l.apps.googleusercontent.com';
+
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
@@ -26,9 +28,9 @@ function timeAgo(iso: string | null): string {
 
 export function SettingsScreen() {
   const {
-    state, setUserProfile, setMonthlyTarget,
+    state, setMonthlyTarget,
     addVendor, updateVendor, deleteVendor, logout, setTheme,
-    connectDrive, disconnectDrive, loadFromDrive, setDriveClientId,
+    connectDrive, disconnectDrive, loadFromDrive,
   } = useApp();
 
   // ── Vendor sheet (add/edit) ──────────────────────────────────────────────
@@ -48,7 +50,6 @@ export function SettingsScreen() {
 
   // ── Drive sheet ──────────────────────────────────────────────────────────
   const [showDriveSheet, setShowDriveSheet] = useState(false);
-  const [driveClientIdInput, setDriveClientIdInput] = useState('');
   const [driveConnecting, setDriveConnecting] = useState(false);
   const [driveLoading, setDriveLoading] = useState(false);
 
@@ -119,13 +120,13 @@ export function SettingsScreen() {
 
   return (
     <div style={{ padding: '24px 20px 100px' }}>
-      <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1A1816', margin: '0 0 20px' }}>Settings</h2>
+      <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 20px' }}>Settings</h2>
 
       {/* ── GOOGLE DRIVE ──────────────────────────────────────────────────── */}
-      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: ds.connected ? 14 : 0 }}>
           <div>
-            <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 4px' }}>GOOGLE DRIVE</p>
+            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 4px' }}>GOOGLE DRIVE</p>
             {ds.connected
               ? <p style={{ fontSize: 13, color: '#5C9A6F', margin: 0, fontWeight: 500 }}>● {ds.userEmail}</p>
               : <p style={{ fontSize: 13, color: '#ADA79F', margin: 0 }}>Back up all bills & vendors automatically</p>}
@@ -146,11 +147,11 @@ export function SettingsScreen() {
 
         {ds.connected && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: 12, background: '#F5F0EB', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: 12, background: 'var(--bg-secondary)', marginBottom: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <FolderOpen style={{ width: 15, height: 15, color: '#D97757' }} />
                 <div>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', margin: 0 }}>BillerPRO Data/</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: 0 }}>BillerPRO Data/</p>
                   <p style={{ fontSize: 11, color: '#ADA79F', margin: 0 }}>{state.bills.length} bills · {state.vendors.length} vendors</p>
                 </div>
               </div>
@@ -182,7 +183,7 @@ export function SettingsScreen() {
                 if (ok) toast.success('Loaded from Drive!');
                 else toast.error(ds.syncError || 'Could not load from Drive');
               }}
-              style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: 'none', cursor: 'pointer', background: driveLoading ? '#E8E2D9' : '#F5F0EB', color: '#6B6560', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              style={{ width: '100%', padding: '11px 0', borderRadius: 12, border: 'none', cursor: 'pointer', background: driveLoading ? 'var(--border)' : 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               {driveLoading
                 ? <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Loading...</>
                 : <><RefreshCw style={{ width: 14, height: 14 }} /> Load latest from Drive</>}
@@ -192,12 +193,12 @@ export function SettingsScreen() {
       </div>
 
       {/* ── VENDORS ───────────────────────────────────────────────────────── */}
-      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
 
         {/* Header row */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: 0 }}>VENDORS</p>
+            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: 0 }}>VENDORS</p>
             {/* Live count badge */}
             {state.vendors.length > 0 && (
               <span style={{ fontSize: 11, fontWeight: 700, color: '#D97757', background: '#FDF5F0', padding: '2px 7px', borderRadius: 99, border: '1px solid rgba(217,119,87,0.2)' }}>
@@ -209,7 +210,7 @@ export function SettingsScreen() {
             {state.vendors.length > 0 && (
               <button
                 onClick={() => { setManageMode(m => !m); setSelectedIds(new Set()); }}
-                style={{ fontSize: 13, fontWeight: 600, color: manageMode ? '#C45C4A' : '#8B8579', background: manageMode ? '#FBF0EE' : '#F5F0EB', padding: '6px 12px', borderRadius: 9, border: 'none', cursor: 'pointer' }}>
+                style={{ fontSize: 13, fontWeight: 600, color: manageMode ? '#C45C4A' : 'var(--text-muted)', background: manageMode ? '#FBF0EE' : 'var(--bg-secondary)', padding: '6px 12px', borderRadius: 9, border: 'none', cursor: 'pointer' }}>
                 {manageMode ? 'Cancel' : 'Manage'}
               </button>
             )}
@@ -262,15 +263,15 @@ export function SettingsScreen() {
                     <span style={{ fontSize: 16, fontWeight: 700, color: v.color }}>{v.name.charAt(0).toUpperCase()}</span>
                   </div>
                   <div>
-                    <p style={{ fontSize: 15, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{v.name}</p>
-                    <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>{v.cutPercent}% commission cut</p>
+                    <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 2px' }}>{v.name}</p>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>{v.cutPercent}% commission cut</p>
                   </div>
                 </div>
                 {/* Edit button — only in normal mode */}
                 {!manageMode && (
                   <button onClick={() => openEditVendor(v)}
-                    style={{ width: 32, height: 32, borderRadius: 9, background: '#F5F0EB', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Pencil style={{ width: 14, height: 14, color: '#6B6560' }} />
+                    style={{ width: 32, height: 32, borderRadius: 9, background: 'var(--bg-secondary)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Pencil style={{ width: 14, height: 14, color: 'var(--text-secondary)' }} />
                   </button>
                 )}
               </motion.div>
@@ -292,14 +293,14 @@ export function SettingsScreen() {
       </div>
 
       {/* ── MONTHLY TARGET ────────────────────────────────────────────────── */}
-      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
-        <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 12px' }}>MONTHLY TARGET</p>
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 12px' }}>MONTHLY TARGET</p>
         {editingTarget ? (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <span style={{ fontSize: 22, color: '#8B8579' }}>₹</span>
+              <span style={{ fontSize: 22, color: 'var(--text-muted)' }}>₹</span>
               <input type="number" value={targetValue} onChange={e => setTargetValue(e.target.value)} autoFocus
-                style={{ flex: 1, fontSize: 28, fontWeight: 700, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                style={{ flex: 1, fontSize: 28, fontWeight: 700, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }} />
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => { const v = parseFloat(targetValue); if (v > 0) { setMonthlyTarget(v); setEditingTarget(false); toast.success('Target updated!'); } }}
@@ -307,7 +308,7 @@ export function SettingsScreen() {
                 Save
               </button>
               <button onClick={() => setEditingTarget(false)}
-                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: '#F0EBE3', color: '#6B6560', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: 'var(--bg-muted)', color: 'var(--text-secondary)', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
                 Cancel
               </button>
             </div>
@@ -315,7 +316,7 @@ export function SettingsScreen() {
         ) : (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <p style={{ fontSize: 26, fontWeight: 700, color: '#1A1816', margin: '0 0 2px' }}>
+              <p style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 2px' }}>
                 {state.monthlyTarget > 0 ? formatCurrency(state.monthlyTarget) : 'Not set'}
               </p>
               <p style={{ fontSize: 12, color: '#ADA79F', margin: 0 }}>earnings target per month</p>
@@ -329,8 +330,8 @@ export function SettingsScreen() {
       </div>
 
       {/* ── EXPORT ────────────────────────────────────────────────────────── */}
-      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
-        <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 12px' }}>EXPORT DATA</p>
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 12px' }}>EXPORT DATA</p>
         {[
           { label: 'Export this month', sub: 'Current month as CSV', action: () => {
             const mb = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
@@ -345,12 +346,12 @@ export function SettingsScreen() {
           }},
         ].map((item, i) => (
           <button key={item.label} onClick={item.action}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px', borderBottom: i === 0 ? '1px solid #F5F0EB' : 'none', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px', borderBottom: i === 0 ? '1px solid var(--border)' : 'none', background: 'transparent', border: 'none', cursor: 'pointer' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Download style={{ width: 17, height: 17, color: '#5C9A6F' }} />
               <div style={{ textAlign: 'left' }}>
-                <p style={{ fontSize: 15, color: '#1A1816', margin: '0 0 1px' }}>{item.label}</p>
-                <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>{item.sub}</p>
+                <p style={{ fontSize: 15, color: 'var(--text-primary)', margin: '0 0 1px' }}>{item.label}</p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>{item.sub}</p>
               </div>
             </div>
             <ChevronRight style={{ width: 17, height: 17, color: '#C4BFB6' }} />
@@ -359,8 +360,8 @@ export function SettingsScreen() {
       </div>
 
       {/* ── THEME ─────────────────────────────────────────────────────────── */}
-      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.06)' }}>
-        <p style={{ fontSize: 12, fontWeight: 700, color: '#8B8579', letterSpacing: '0.06em', margin: '0 0 12px' }}>THEME</p>
+      <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 12px' }}>THEME</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
           {[
             { key: 'light' as const, label: 'Light', icon: Sun },
@@ -368,7 +369,7 @@ export function SettingsScreen() {
             { key: 'system' as const, label: 'System', icon: Monitor },
           ].map(t => (
             <button key={t.key} onClick={() => setTheme(t.key)}
-              style={{ padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer', background: state.theme === t.key ? '#D97757' : '#F5F0EB', color: state.theme === t.key ? '#fff' : '#6B6560', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600 }}>
+              style={{ padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer', background: state.theme === t.key ? '#D97757' : 'var(--bg-secondary)', color: state.theme === t.key ? '#fff' : 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600 }}>
               <t.icon style={{ width: 17, height: 17 }} />
               {t.label}
             </button>
@@ -396,21 +397,21 @@ export function SettingsScreen() {
               <motion.div
                 initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.92 }}
                 transition={{ type: 'spring', damping: 24, stiffness: 300 }}
-                style={{ width: '100%', maxWidth: 340, borderRadius: 22, background: '#FFFFFF', padding: '28px 24px', boxShadow: '0 20px 60px rgba(26,24,22,0.2)' }}>
+                style={{ width: '100%', maxWidth: 340, borderRadius: 22, background: 'var(--bg-card)', padding: '28px 24px', boxShadow: '0 20px 60px rgba(26,24,22,0.2)' }}>
 
                 {/* Warning icon */}
                 <div style={{ width: 56, height: 56, borderRadius: 16, background: '#FBF0EE', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
                   <Trash2 style={{ width: 24, height: 24, color: '#C45C4A' }} />
                 </div>
 
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1A1816', textAlign: 'center', margin: '0 0 8px' }}>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center', margin: '0 0 8px' }}>
                   Delete {selectedIds.size > 1 ? `${selectedIds.size} Vendors` : 'Vendor'}?
                 </h3>
-                <p style={{ fontSize: 14, color: '#8B8579', textAlign: 'center', margin: '0 0 6px', lineHeight: 1.5 }}>
+                <p style={{ fontSize: 14, color: 'var(--text-muted)', textAlign: 'center', margin: '0 0 6px', lineHeight: 1.5 }}>
                   You are about to permanently delete:
                 </p>
                 {/* List selected vendor names */}
-                <div style={{ background: '#F5F0EB', borderRadius: 10, padding: '10px 14px', margin: '0 0 16px' }}>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 14px', margin: '0 0 16px' }}>
                   {selectedNames.map(name => (
                     <p key={name} style={{ fontSize: 14, fontWeight: 600, color: '#C45C4A', margin: '2px 0' }}>· {name}</p>
                   ))}
@@ -425,7 +426,7 @@ export function SettingsScreen() {
                     Yes, Delete {selectedIds.size > 1 ? 'All' : 'It'}
                   </button>
                   <button onClick={() => setShowDeleteConfirm(false)}
-                    style={{ width: '100%', padding: '13px 0', borderRadius: 13, background: '#F5F0EB', color: '#6B6560', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>
+                    style={{ width: '100%', padding: '13px 0', borderRadius: 13, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>
                     Cancel, Keep {selectedIds.size > 1 ? 'Them' : 'It'}
                   </button>
                 </div>
@@ -450,41 +451,41 @@ export function SettingsScreen() {
                 style={{
                   width: '100%', maxWidth: 430,
                   borderRadius: '22px 22px 0 0',
-                  background: '#FFFFFF',
+                  background: 'var(--bg-card)',
                   boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
                   // Extra bottom padding to clear the nav bar + device home indicator
                   padding: '20px 24px 48px',
                   paddingBottom: 'max(48px, calc(48px + env(safe-area-inset-bottom)))',
                   pointerEvents: 'all',
                 }}>
-                <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 18px' }} />
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--border)', margin: '0 auto 18px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 19, fontWeight: 700, color: '#1A1816', margin: 0 }}>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                     {editingVendor ? 'Edit Vendor' : 'Add Vendor'}
                   </h3>
                   <button onClick={() => setShowVendorSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-                    <X style={{ width: 19, height: 19, color: '#8B8579' }} />
+                    <X style={{ width: 19, height: 19, color: 'var(--text-muted)' }} />
                   </button>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
-                    <label style={{ fontSize: 13, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Vendor Name</label>
+                    <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Vendor Name</label>
                     <input
                       value={vendorName}
                       onChange={e => setVendorName(e.target.value)}
                       placeholder="e.g. F & F Decor"
                       autoFocus
-                      style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 16, background: 'var(--bg-secondary)', border: '1px solid var(--border)', outline: 'none', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: 13, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Your Commission Cut (%)</label>
+                    <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Your Commission Cut (%)</label>
                     <input
                       type="number"
                       value={vendorCut}
                       onChange={e => setVendorCut(e.target.value)}
                       placeholder="e.g. 10"
-                      style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 16, background: 'var(--bg-secondary)', border: '1px solid var(--border)', outline: 'none', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                     />
                   </div>
                   <motion.button whileTap={{ scale: 0.97 }} onClick={saveVendor}
@@ -510,56 +511,42 @@ export function SettingsScreen() {
                 transition={{ type: 'spring', damping: 28, stiffness: 300 }}
                 style={{
                   width: '100%', maxWidth: 430,
-                  borderRadius: '22px 22px 0 0', background: '#FFFFFF',
+                  borderRadius: '22px 22px 0 0', background: 'var(--bg-card)',
                   boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
                   padding: '20px 24px 48px',
                   paddingBottom: 'max(48px, calc(48px + env(safe-area-inset-bottom)))',
                   pointerEvents: 'all',
                   overflowY: 'auto', maxHeight: '85vh',
                 }}>
-                <div style={{ width: 40, height: 4, borderRadius: 9999, background: '#E8E2D9', margin: '0 auto 18px' }} />
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--border)', margin: '0 auto 18px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <h3 style={{ fontSize: 19, fontWeight: 700, color: '#1A1816', margin: 0 }}>Connect Google Drive</h3>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Connect Google Drive</h3>
                   <button onClick={() => setShowDriveSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-                    <X style={{ width: 19, height: 19, color: '#8B8579' }} />
+                    <X style={{ width: 19, height: 19, color: 'var(--text-muted)' }} />
                   </button>
                 </div>
-                <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 16px', lineHeight: 1.5 }}>
-                  Bills & vendors will be saved to <strong>"BillerPRO Data"</strong> in your Google Drive — automatically after every change.
+                <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.6, textAlign: 'center' }}>
+                  Your bills & vendors will be saved automatically to a <strong style={{ color: 'var(--text-primary)' }}>"BillerPRO Data"</strong> folder in your own Google Drive.
                 </p>
-                <div style={{ background: '#EEF5F0', borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#5C9A6F', margin: '0 0 6px' }}>What auto-syncs:</p>
-                  {['Every bill scan → bill_xxxxx.json', 'Vendor list → billerpro_vendors.json', 'Monthly targets & settings', 'You own the files — delete anytime from Drive'].map((s, i) => (
-                    <p key={i} style={{ fontSize: 12, color: '#5C9A6F', margin: '0 0 3px' }}>✓ {s}</p>
+                <div style={{ background: '#EEF5F0', borderRadius: 12, padding: '12px 14px', marginBottom: 20 }}>
+                  {['Every bill scan saves instantly', 'All vendors & settings backed up', 'You fully own the data — delete anytime', 'Works across all your devices'].map((s, i) => (
+                    <p key={i} style={{ fontSize: 13, color: '#5C9A6F', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 700 }}>✓</span> {s}
+                    </p>
                   ))}
                 </div>
-                <div style={{ background: '#F5F0EB', borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#6B6560', margin: '0 0 8px' }}>One-time setup (5 mins on laptop):</p>
-                  {['Go to console.cloud.google.com', 'New project → Enable "Google Drive API"', 'Credentials → OAuth 2.0 Client ID → Web app', 'Add https://biller-pro.vercel.app as origin', 'Copy Client ID and paste below'].map((s, i) => (
-                    <p key={i} style={{ fontSize: 12, color: '#6B6560', margin: '0 0 4px' }}>{i+1}. {s}</p>
-                  ))}
-                </div>
-                <label style={{ fontSize: 13, fontWeight: 500, color: '#6B6560', display: 'block', marginBottom: 6 }}>Google OAuth Client ID</label>
-                <input
-                  value={driveClientIdInput || state.driveClientId}
-                  onChange={e => setDriveClientIdInput(e.target.value)}
-                  placeholder="xxxxxxx.apps.googleusercontent.com"
-                  style={{ width: '100%', padding: '13px 15px', borderRadius: 12, fontSize: 13, background: '#F5F0EB', border: '1px solid #E8E2D9', outline: 'none', color: '#1A1816', boxSizing: 'border-box', fontFamily: 'monospace', marginBottom: 14 }}
-                />
                 <motion.button whileTap={{ scale: 0.97 }} disabled={driveConnecting}
                   onClick={async () => {
-                    const id = (driveClientIdInput || state.driveClientId).trim();
-                    if (!id.includes('googleusercontent.com')) { toast.error('Invalid Client ID'); return; }
+                    const id = GOOGLE_DRIVE_CLIENT_ID;
                     setDriveConnecting(true);
                     try {
                       await connectDrive(id);
-                      setDriveClientIdInput('');
                       setShowDriveSheet(false);
                       toast.success('Google Drive connected! Auto-syncing from now.');
                       const ok = await loadFromDrive();
                       if (ok) toast.success('Loaded existing data from your Drive!');
                     } catch (e: any) {
-                      toast.error(e.message || 'Connection failed — check Client ID');
+                      toast.error(e.message || 'Connection failed');
                     } finally {
                       setDriveConnecting(false);
                     }

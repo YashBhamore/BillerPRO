@@ -28,7 +28,6 @@ export function HomeDashboard() {
   const monthBills = useMemo(() => getBillsForMonth(state.selectedMonth), [getBillsForMonth, state.selectedMonth]);
   const totalEarnings = useMemo(() => getEarningsForMonth(state.selectedMonth), [getEarningsForMonth, state.selectedMonth]);
   const totalBills = useMemo(() => getTotalBillsForMonth(state.selectedMonth), [getTotalBillsForMonth, state.selectedMonth]);
-  const activeVendors = useMemo(() => new Set(monthBills.map(b => b.vendorId)).size, [monthBills]);
   const avgCutPercent = useMemo(() => {
     if (totalBills === 0) return 0;
     return (totalEarnings / totalBills) * 100;
@@ -92,23 +91,23 @@ export function HomeDashboard() {
     <div className="pb-5 px-5 pt-6">
       {/* Month Selector + Exit */}
       <div className="flex items-center justify-between mb-5">
-        <button onClick={prevMonth} className="w-9 h-9 rounded-lg flex items-center justify-center active:bg-[#F0EBE3]" style={{ background: '#FFFFFF', border: '1px solid #E8E2D9' }}>
-          <ChevronLeft className="w-5 h-5 text-[#6B6560]" />
+        <button onClick={prevMonth} className="w-9 h-9 rounded-lg flex items-center justify-center active:bg-[var(--bg-muted)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <ChevronLeft className="w-5 h-5 text-[var(--text-secondary)]" />
         </button>
-        <h2 className="text-[#1A1816]" style={{ fontSize: 20, fontWeight: 700 }}>
+        <h2 className="text-[var(--text-primary)]" style={{ fontSize: 20, fontWeight: 700 }}>
           {MONTHS[month - 1]} {year}
         </h2>
         <div className="flex items-center gap-2">
-          <button onClick={nextMonth} className="w-9 h-9 rounded-lg flex items-center justify-center active:bg-[#F0EBE3]" style={{ background: '#FFFFFF', border: '1px solid #E8E2D9' }}>
-            <ChevronRight className="w-5 h-5 text-[#6B6560]" />
+          <button onClick={nextMonth} className="w-9 h-9 rounded-lg flex items-center justify-center active:bg-[var(--bg-muted)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <ChevronRight className="w-5 h-5 text-[var(--text-secondary)]" />
           </button>
           <button
             onClick={logout}
             className="w-9 h-9 rounded-lg flex items-center justify-center active:bg-[#FBF0EE] transition-colors"
-            style={{ background: '#FFFFFF', border: '1px solid #E8E2D9' }}
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
             title="Exit"
           >
-            <LogOut className="w-[18px] h-[18px] text-[#8B8579]" />
+            <LogOut className="w-[18px] h-[18px] text-[var(--text-muted)]" />
           </button>
         </div>
       </div>
@@ -118,10 +117,10 @@ export function HomeDashboard() {
         initial={{ opacity: 0, scale: 0.97 }}
         animate={{ opacity: 1, scale: 1 }}
         className="rounded-2xl p-5 mb-5 flex flex-col items-center"
-        style={{ background: '#FFFFFF', boxShadow: '0 1px 4px rgba(26,24,22,0.05), 0 4px 16px rgba(26,24,22,0.03)' }}
+        style={{ background: 'var(--bg-card)', boxShadow: '0 1px 4px rgba(26,24,22,0.05), 0 4px 16px rgba(26,24,22,0.03)' }}
       >
         <div className="flex items-center justify-between w-full mb-3">
-          <span className="text-[#1A1816]" style={{ fontSize: 16, fontWeight: 600 }}>Monthly Target</span>
+          <span className="text-[var(--text-primary)]" style={{ fontSize: 16, fontWeight: 600 }}>Monthly Target</span>
           <button onClick={() => setActiveTab('settings')} className="text-[#D97757]" style={{ fontSize: 14, fontWeight: 600 }}>Edit</button>
         </div>
         <CircularProgress
@@ -131,9 +130,9 @@ export function HomeDashboard() {
           earned={formatFull(Math.round(totalEarnings))}
           target={formatFull(state.monthlyTarget)}
         />
-        <div className="flex items-center gap-2 mt-3 px-4 py-1.5 rounded-full" style={{ background: '#F5F0EB' }}>
+        <div className="flex items-center gap-2 mt-3 px-4 py-1.5 rounded-full" style={{ background: 'var(--bg-secondary)' }}>
           <span style={{ fontSize: 15 }}>{motivation.emoji}</span>
-          <span className="text-[#6B6560]" style={{ fontSize: 14, fontWeight: 500 }}>{motivation.text}</span>
+          <span className="text-[var(--text-secondary)]" style={{ fontSize: 14, fontWeight: 500 }}>{motivation.text}</span>
         </div>
       </motion.div>
 
@@ -143,7 +142,7 @@ export function HomeDashboard() {
           { icon: IndianRupee, label: 'Total Bills', value: formatShort(totalBills), color: '#D97757', bg: '#FDF5F0', tab: 'bills' },
           { icon: TrendingUp, label: 'Earnings', value: formatShort(Math.round(totalEarnings)), color: '#5C9A6F', bg: '#EEF5F0', tab: 'analytics' },
           { icon: Users, label: 'Vendors', value: String(state.vendors.length), color: '#D4A853', bg: '#FBF5E8', tab: 'settings' },
-          { icon: Percent, label: 'Avg Cut', value: avgCutPercent.toFixed(1) + '%', color: '#9B7E6B', bg: '#F5F0EB', tab: 'analytics' },
+          { icon: Percent, label: 'Avg Cut', value: avgCutPercent.toFixed(1) + '%', color: '#9B7E6B', bg: 'var(--bg-secondary)', tab: 'analytics' },
         ].map((stat, i) => (
           <motion.button
             key={stat.label}
@@ -153,14 +152,14 @@ export function HomeDashboard() {
             transition={{ delay: i * 0.05 }}
             whileTap={{ scale: 0.97 }}
             className="rounded-xl p-4 flex items-center gap-3 text-left active:bg-[#FAFAF8]"
-            style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+            style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
           >
             <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: stat.bg }}>
               <stat.icon className="w-[18px] h-[18px]" style={{ color: stat.color }} />
             </div>
             <div>
-              <p className="text-[#8B8579]" style={{ fontSize: 13, fontWeight: 500 }}>{stat.label}</p>
-              <p className="text-[#1A1816]" style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>{stat.value}</p>
+              <p className="text-[var(--text-muted)]" style={{ fontSize: 13, fontWeight: 500 }}>{stat.label}</p>
+              <p className="text-[var(--text-primary)]" style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>{stat.value}</p>
             </div>
           </motion.button>
         ))}
@@ -169,7 +168,7 @@ export function HomeDashboard() {
       {/* Vendors & Commission */}
       <div className="mb-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[#1A1816]" style={{ fontSize: 18, fontWeight: 700 }}>Vendors & Commission</h3>
+          <h3 className="text-[var(--text-primary)]" style={{ fontSize: 18, fontWeight: 700 }}>Vendors & Commission</h3>
           <button
             onClick={openAddVendor}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[#D97757] active:opacity-70"
@@ -188,7 +187,7 @@ export function HomeDashboard() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.03 }}
                 className="rounded-xl px-4 py-3 flex items-center gap-3"
-                style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+                style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
               >
                 <div
                   className="w-10 h-10 rounded-full flex items-center justify-center text-white flex-shrink-0"
@@ -197,8 +196,8 @@ export function HomeDashboard() {
                   {vendor.name.split(' ').map(w => w[0]).join('').substring(0, 2)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[#1A1816] truncate" style={{ fontSize: 15, fontWeight: 600 }}>{vendor.name}</p>
-                  <p className="text-[#8B8579]" style={{ fontSize: 13 }}>
+                  <p className="text-[var(--text-primary)] truncate" style={{ fontSize: 15, fontWeight: 600 }}>{vendor.name}</p>
+                  <p className="text-[var(--text-muted)]" style={{ fontSize: 13 }}>
                     {ve ? `${ve.count} bills` : 'No bills'}
                     {ve ? ` · ${formatShort(ve.total)}` : ''}
                   </p>
@@ -214,7 +213,7 @@ export function HomeDashboard() {
                     +{formatShort(Math.round(ve.cut))}
                   </span>
                 )}
-                <button onClick={() => openEditVendor(vendor.id)} className="p-1.5 rounded-md active:bg-[#F5F0EB]">
+                <button onClick={() => openEditVendor(vendor.id)} className="p-1.5 rounded-md active:bg-[var(--bg-secondary)]">
                   <Pencil className="w-4 h-4 text-[#C4BFB6]" />
                 </button>
 
@@ -246,47 +245,47 @@ export function HomeDashboard() {
                 width: '100%',
                 maxWidth: 430,
                 borderRadius: '20px 20px 0 0',
-                background: '#FFFFFF',
+                background: 'var(--bg-card)',
                 boxShadow: '0 -4px 20px rgba(26,24,22,0.08)',
                 pointerEvents: 'all',
               }}
             >
               <div className="flex justify-center pt-3 pb-1">
-                <div className="w-10 h-1 rounded-full bg-[#E8E2D9]" />
+                <div className="w-10 h-1 rounded-full bg-[var(--border)]" />
               </div>
               <div className="px-6 pb-7">
                 <div className="flex items-center justify-between mb-5">
-                  <h3 className="text-[#1A1816]" style={{ fontSize: 20, fontWeight: 700 }}>
+                  <h3 className="text-[var(--text-primary)]" style={{ fontSize: 20, fontWeight: 700 }}>
                     {editingVendor ? 'Edit Vendor' : 'Add Vendor'}
                   </h3>
                   <button onClick={() => setShowVendorSheet(false)} className="p-1.5">
-                    <X className="w-5 h-5 text-[#8B8579]" />
+                    <X className="w-5 h-5 text-[var(--text-muted)]" />
                   </button>
                 </div>
                 <div className="space-y-4">
                   <div>
-                    <label className="text-[#6B6560] mb-1.5 block" style={{ fontSize: 14, fontWeight: 500 }}>Vendor Name</label>
+                    <label className="text-[var(--text-secondary)] mb-1.5 block" style={{ fontSize: 14, fontWeight: 500 }}>Vendor Name</label>
                     <input
                       value={vendorName}
                       onChange={e => setVendorName(e.target.value)}
                       placeholder="e.g. Sharma Traders"
-                      className="w-full px-4 py-3.5 rounded-xl text-[#1A1816] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10"
-                      style={{ fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
+                      className="w-full px-4 py-3.5 rounded-xl text-[var(--text-primary)] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10"
+                      style={{ fontSize: 16, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
                       inputMode="text"
                     />
                   </div>
                   <div>
-                    <label className="text-[#6B6560] mb-1.5 block" style={{ fontSize: 14, fontWeight: 500 }}>Commission Cut (%)</label>
+                    <label className="text-[var(--text-secondary)] mb-1.5 block" style={{ fontSize: 14, fontWeight: 500 }}>Commission Cut (%)</label>
                     <div className="relative">
                       <input
                         type="number"
                         value={vendorCut}
                         onChange={e => setVendorCut(e.target.value)}
                         placeholder="10"
-                        className="w-full px-4 py-3.5 rounded-xl text-[#1A1816] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10 pr-10"
-                        style={{ fontSize: 16, background: '#F5F0EB', border: '1px solid #E8E2D9' }}
+                        className="w-full px-4 py-3.5 rounded-xl text-[var(--text-primary)] outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#D97757]/10 pr-10"
+                        style={{ fontSize: 16, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
                       />
-                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8B8579]" style={{ fontSize: 15 }}>%</span>
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" style={{ fontSize: 15 }}>%</span>
                     </div>
                   </div>
                 </div>

@@ -401,8 +401,8 @@ export function UploadBill() {
       {/* Header */}
       <div style={{ marginBottom: 24, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1A1816', margin: '0 0 4px' }}>Upload Bill</h2>
-          <p style={{ fontSize: 14, color: '#8B8579', margin: 0 }}>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Upload Bill</h2>
+          <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0 }}>
             'PDF text masked locally before AI scanning'
           </p>
         </div>
@@ -439,10 +439,10 @@ export function UploadBill() {
                 <CloudUpload style={{ width: 26, height: 26, color: '#D97757' }} />
               </div>
               <div style={{ textAlign: 'center' }}>
-                <p style={{ fontSize: 16, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>
+                <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' }}>
                   Tap to upload PDF or photo
                 </p>
-                <p style={{ fontSize: 13, color: '#8B8579', margin: 0 }}>PDF, JPG, PNG supported</p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>PDF, JPG, PNG supported</p>
               </div>
             </button>
 
@@ -457,9 +457,9 @@ export function UploadBill() {
             )}
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
-              <div style={{ flex: 1, height: 1, background: '#E8E2D9' }} />
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
               <span style={{ fontSize: 13, color: '#C4BFB6', fontWeight: 500 }}>OR</span>
-              <div style={{ flex: 1, height: 1, background: '#E8E2D9' }} />
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -469,7 +469,7 @@ export function UploadBill() {
               ].map(item => (
                 <button key={item.label} onClick={item.action}
                   style={{
-                    padding: '18px 0', borderRadius: 14, background: '#FFFFFF',
+                    padding: '18px 0', borderRadius: 14, background: 'var(--bg-card)',
                     boxShadow: '0 1px 3px rgba(26,24,22,0.06)', border: 'none', cursor: 'pointer',
                     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9,
                   }}>
@@ -477,8 +477,8 @@ export function UploadBill() {
                     <item.icon style={{ width: 19, height: 19, color: item.color }} />
                   </div>
                   <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: 13, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{item.label}</p>
-                    <p style={{ fontSize: 11, color: '#8B8579', margin: 0 }}>{item.sub}</p>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 2px' }}>{item.label}</p>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{item.sub}</p>
                   </div>
                 </button>
               ))}
@@ -495,10 +495,10 @@ export function UploadBill() {
               <Loader2 style={{ width: 48, height: 48, color: '#D97757' }} />
             </motion.div>
 
-            <p style={{ fontSize: 18, fontWeight: 600, color: '#1A1816', margin: '0 0 8px', textAlign: 'center' }}>
+            <p style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 8px', textAlign: 'center' }}>
               {stage === 'extracting' ? 'Reading bill locally...' : 'AI extracting details...'}
             </p>
-            <p style={{ fontSize: 14, color: '#8B8579', margin: '0 0 4px', textAlign: 'center' }}>{stageLabel}</p>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: '0 0 4px', textAlign: 'center' }}>{stageLabel}</p>
             {fileName && <p style={{ fontSize: 12, color: '#C4BFB6', margin: 0 }}>{fileName}</p>}
 
             {/* Step progress */}
@@ -511,14 +511,14 @@ export function UploadBill() {
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{
                     width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                    background: step.done ? '#5C9A6F' : (i === (stage === 'extracting' ? 0 : 1) ? '#D97757' : '#E8E2D9'),
+                    background: step.done ? '#5C9A6F' : (i === (stage === 'extracting' ? 0 : 1) ? '#D97757' : 'var(--border)'),
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
                     {step.done
                       ? <CheckCircle2 style={{ width: 13, height: 13, color: '#fff' }} />
                       : <span style={{ fontSize: 11, color: '#fff', fontWeight: 700 }}>{i + 1}</span>}
                   </div>
-                  <span style={{ fontSize: 13, color: step.done ? '#5C9A6F' : '#8B8579', fontWeight: step.done ? 500 : 400 }}>
+                  <span style={{ fontSize: 13, color: step.done ? '#5C9A6F' : 'var(--text-muted)', fontWeight: step.done ? 500 : 400 }}>
                     {step.label}
                   </span>
                 </div>
@@ -536,18 +536,18 @@ export function UploadBill() {
               <span style={{ fontSize: 36 }}>⚠️</span>
             </div>
 
-            <h3 style={{ fontSize: 20, fontWeight: 700, color: '#1A1816', margin: '0 0 8px', textAlign: 'center' }}>
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px', textAlign: 'center' }}>
               Same Bill Already Exists!
             </h3>
-            <p style={{ fontSize: 14, color: '#8B8579', margin: '0 0 24px', textAlign: 'center', lineHeight: 1.6 }}>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: '0 0 24px', textAlign: 'center', lineHeight: 1.6 }}>
               Bill <strong style={{ color: '#D97757' }}>#{duplicateBill.billNo}</strong> was already scanned and saved.
               Uploading it again would waste an API credit.
             </p>
 
             <div style={{ width: '100%', padding: '16px', borderRadius: 14, background: '#FDF5F0', border: '1px solid rgba(217,119,87,0.2)', marginBottom: 24 }}>
-              <p style={{ fontSize: 12, fontWeight: 600, color: '#8B8579', margin: '0 0 8px', letterSpacing: '0.05em' }}>EXISTING SAVED BILL</p>
-              <p style={{ fontSize: 15, fontWeight: 600, color: '#1A1816', margin: '0 0 4px' }}>{duplicateBill.existingBill.customerName}</p>
-              <p style={{ fontSize: 13, color: '#8B8579', margin: '0 0 4px' }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', margin: '0 0 8px', letterSpacing: '0.05em' }}>EXISTING SAVED BILL</p>
+              <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' }}>{duplicateBill.existingBill.customerName}</p>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 4px' }}>
                 {formatCurrency(duplicateBill.existingBill.amount)} · {duplicateBill.existingBill.date}
               </p>
               <p style={{ fontSize: 12, color: '#ADA79F', margin: 0 }}>{duplicateBill.existingBill.notes}</p>
@@ -577,7 +577,7 @@ export function UploadBill() {
                     setStage('upload');
                   }
                 }}
-                style={{ width: '100%', padding: '13px 0', borderRadius: 15, color: '#C45C4A', background: 'transparent', border: '1px solid #E8E2D9', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+                style={{ width: '100%', padding: '13px 0', borderRadius: 15, color: '#C45C4A', background: 'transparent', border: '1px solid var(--border)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
                 Scan Anyway (Uses API Credit)
               </button>
             </div>
@@ -599,13 +599,13 @@ export function UploadBill() {
             )}
 
             {/* File badge */}
-            <div style={{ padding: '12px 14px', borderRadius: 14, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ width: 38, height: 46, borderRadius: 8, background: '#F5F0EB', border: '1px solid #E8E2D9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: '#8B8579' }}>PDF</span>
+            <div style={{ padding: '12px 14px', borderRadius: 14, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 38, height: 46, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)' }}>PDF</span>
               </div>
               <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 14, fontWeight: 600, color: '#1A1816', margin: '0 0 2px' }}>{fileName}</p>
-                {vendorHint && <p style={{ fontSize: 12, color: '#8B8579', margin: 0 }}>Issuer: {vendorHint}{extractedBillNo ? ` · Bill #${extractedBillNo}` : ''}</p>}
+                <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 2px' }}>{fileName}</p>
+                {vendorHint && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>Issuer: {vendorHint}{extractedBillNo ? ` · Bill #${extractedBillNo}` : ''}</p>}
               </div>
               <CheckCircle2 style={{ width: 18, height: 18, color: '#5C9A6F' }} />
             </div>
@@ -617,33 +617,33 @@ export function UploadBill() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
               {/* Date */}
-              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Invoice Date</label>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>Invoice Date</label>
                   <ConfBadge level={confidence.date} />
                 </div>
                 <input type="date" value={extractedDate} onChange={e => setExtractedDate(e.target.value)}
-                  style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                  style={{ width: '100%', fontSize: 16, fontWeight: 500, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }} />
               </div>
 
               {/* Bill number */}
               {extractedBillNo && (
-                <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579', display: 'block', marginBottom: 5 }}>Bill / Invoice No.</label>
+                <div style={{ padding: '13px 15px', borderRadius: 13, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: 5 }}>Bill / Invoice No.</label>
                   <input value={extractedBillNo} onChange={e => setExtractedBillNo(e.target.value)}
-                    style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                    style={{ width: '100%', fontSize: 16, fontWeight: 500, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }} />
                 </div>
               )}
 
               {/* Vendor */}
-              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Vendor (who pays your cut)</label>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>Vendor (who pays your cut)</label>
                   {selectedVendor ? <CheckCircle2 style={{ width: 15, height: 15, color: '#5C9A6F' }} /> : <AlertTriangle style={{ width: 15, height: 15, color: '#D4A853' }} />}
                 </div>
                 {state.vendors.length > 0 ? (
                   <select value={extractedVendorId} onChange={e => setExtractedVendorId(e.target.value)}
-                    style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }}>
+                    style={{ width: '100%', fontSize: 16, fontWeight: 500, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }}>
                     <option value="">— Select vendor —</option>
                     {state.vendors.map(v => <option key={v.id} value={v.id}>{v.name} ({v.cutPercent}%)</option>)}
                   </select>
@@ -653,25 +653,25 @@ export function UploadBill() {
               </div>
 
               {/* Customer */}
-              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Customer (billed to)</label>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>Customer (billed to)</label>
                   <ConfBadge level={confidence.customerName} />
                 </div>
                 <input value={extractedCustomer} onChange={e => setExtractedCustomer(e.target.value)} placeholder="Customer name"
-                  style={{ width: '100%', fontSize: 16, fontWeight: 500, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                  style={{ width: '100%', fontSize: 16, fontWeight: 500, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }} />
               </div>
 
               {/* Amount */}
-              <div style={{ padding: '13px 15px', borderRadius: 13, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
+              <div style={{ padding: '13px 15px', borderRadius: 13, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: '#8B8579' }}>Net Amount (final total)</label>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>Net Amount (final total)</label>
                   <ConfBadge level={confidence.amount} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 20, color: '#8B8579' }}>₹</span>
+                  <span style={{ fontSize: 20, color: 'var(--text-muted)' }}>₹</span>
                   <input type="number" value={extractedAmount} onChange={e => setExtractedAmount(e.target.value)}
-                    style={{ flex: 1, fontSize: 26, fontWeight: 700, color: '#1A1816', background: 'transparent', border: 'none', outline: 'none' }} />
+                    style={{ flex: 1, fontSize: 26, fontWeight: 700, color: 'var(--text-primary)', background: 'transparent', border: 'none', outline: 'none' }} />
                 </div>
               </div>
             </div>
@@ -685,7 +685,7 @@ export function UploadBill() {
                     <p style={{ fontSize: 13, color: '#5C9A6F', margin: '0 0 2px', fontWeight: 500 }}>
                       Your {selectedVendor.cutPercent}% cut from {selectedVendor.name}
                     </p>
-                    <p style={{ fontSize: 11, color: '#8B8579', margin: 0 }}>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
                       ₹{amount.toLocaleString('en-IN')} × {selectedVendor.cutPercent}%
                     </p>
                   </div>
@@ -707,7 +707,7 @@ export function UploadBill() {
                 Save Bill ✓
               </motion.button>
               <button onClick={() => { setStage('upload'); setFileName(''); setMaskedFields([]); }}
-                style={{ width: '100%', padding: '13px 0', borderRadius: 15, color: '#6B6560', background: 'transparent', border: '1px solid #E8E2D9', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+                style={{ width: '100%', padding: '13px 0', borderRadius: 15, color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
                 Upload Different Bill
               </button>
             </div>

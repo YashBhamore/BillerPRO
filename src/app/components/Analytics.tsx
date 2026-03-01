@@ -137,20 +137,20 @@ export function Analytics() {
   }, [state.bills, periodBills, getVendor, monthKeys]);
 
   const customTooltipStyle = {
-    backgroundColor: '#1A1816',
+    backgroundColor: 'var(--bg-card)',
     border: 'none',
     borderRadius: 8,
     padding: '8px 12px',
     fontSize: 13,
-    color: 'white',
+    color: 'var(--text-primary)',
     fontFamily: "'Inter', sans-serif",
   };
 
   return (
     <div className="min-h-full px-5 pt-6 pb-5">
       <div className="mb-5">
-        <h2 className="text-[#1A1816] mb-1" style={{ fontSize: 22, fontWeight: 700 }}>Analytics</h2>
-        <p className="text-[#8B8579]" style={{ fontSize: 15 }}>Your business performance at a glance</p>
+        <h2 className="text-[var(--text-primary)] mb-1" style={{ fontSize: 22, fontWeight: 700 }}>Analytics</h2>
+        <p className="text-[var(--text-muted)]" style={{ fontSize: 15 }}>Your business performance at a glance</p>
       </div>
 
       {/* Period selector — now actually filters data */}
@@ -162,9 +162,9 @@ export function Analytics() {
             className="px-4 py-2.5 rounded-lg flex-shrink-0 whitespace-nowrap transition-all"
             style={{
               fontSize: 14, fontWeight: 600,
-              background: period === p ? '#1A1816' : '#FFFFFF',
-              color: period === p ? '#FFFFFF' : '#6B6560',
-              border: period === p ? 'none' : '1px solid #E8E2D9',
+              background: period === p ? 'var(--text-primary)' : 'var(--bg-card)',
+              color: period === p ? 'var(--bg-card)' : 'var(--text-secondary)',
+              border: period === p ? 'none' : '1px solid var(--border)',
             }}
           >
             {p}
@@ -178,7 +178,7 @@ export function Analytics() {
           { icon: Trophy, label: 'Top Vendor', value: stats.topVendor, color: '#D4A853', bg: '#FBF5E8' },
           { icon: Calendar, label: 'Best Month', value: stats.bestMonth, sub: stats.bestMonthAmt, color: '#5C9A6F', bg: '#EEF5F0' },
           { icon: Receipt, label: `Bills (${period})`, value: String(stats.totalBills), color: '#D97757', bg: '#FDF5F0' },
-          { icon: TrendingUp, label: 'Avg / Month', value: stats.avgMonthly, color: '#9B7E6B', bg: '#F5F0EB' },
+          { icon: TrendingUp, label: 'Avg / Month', value: stats.avgMonthly, color: '#9B7E6B', bg: 'var(--bg-secondary)' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -186,14 +186,14 @@ export function Analytics() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
             className="rounded-xl p-4"
-            style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+            style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
           >
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2.5" style={{ background: s.bg }}>
               <s.icon className="w-[18px] h-[18px]" style={{ color: s.color }} />
             </div>
-            <p className="text-[#8B8579] mb-0.5" style={{ fontSize: 13, fontWeight: 500 }}>{s.label}</p>
-            <p className="text-[#1A1816] truncate" style={{ fontSize: 17, fontWeight: 700 }}>{s.value}</p>
-            {s.sub && <p className="text-[#8B8579]" style={{ fontSize: 13 }}>{s.sub}</p>}
+            <p className="text-[var(--text-muted)] mb-0.5" style={{ fontSize: 13, fontWeight: 500 }}>{s.label}</p>
+            <p className="text-[var(--text-primary)] truncate" style={{ fontSize: 17, fontWeight: 700 }}>{s.value}</p>
+            {s.sub && <p className="text-[var(--text-muted)]" style={{ fontSize: 13 }}>{s.sub}</p>}
           </motion.div>
         ))}
       </div>
@@ -203,14 +203,14 @@ export function Analytics() {
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         className="rounded-2xl p-5 mb-4"
-        style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+        style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
       >
-        <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>
+        <h3 className="text-[var(--text-primary)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>
           Monthly Overview — {period}
         </h3>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={monthlyData} barGap={2}>
-            <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#8B8579' }} axisLine={false} tickLine={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 12, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: '#C4BFB6' }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
             <Tooltip contentStyle={customTooltipStyle} formatter={(v: number) => formatCurrency(v)} />
             <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 13, paddingTop: 8 }} />
@@ -227,9 +227,9 @@ export function Analytics() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
           className="rounded-2xl p-5"
-          style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+          style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
         >
-          <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Earnings by Vendor</h3>
+          <h3 className="text-[var(--text-primary)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Earnings by Vendor</h3>
           {vendorPieData.length > 0 ? (
             <div className="flex items-center gap-4">
               <div className="relative flex-shrink-0">
@@ -242,7 +242,7 @@ export function Analytics() {
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
                     <p className="text-[#C4BFB6]" style={{ fontSize: 10 }}>Total</p>
-                    <p className="text-[#1A1816]" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(totalPieEarnings)}</p>
+                    <p className="text-[var(--text-primary)]" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(totalPieEarnings)}</p>
                   </div>
                 </div>
               </div>
@@ -250,8 +250,8 @@ export function Analytics() {
                 {vendorPieData.map(d => (
                   <div key={d.name} className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
-                    <span className="text-[#6B6560] truncate flex-1" style={{ fontSize: 13 }}>{d.name}</span>
-                    <span className="text-[#1A1816] flex-shrink-0" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(d.value)}</span>
+                    <span className="text-[var(--text-secondary)] truncate flex-1" style={{ fontSize: 13 }}>{d.name}</span>
+                    <span className="text-[var(--text-primary)] flex-shrink-0" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(d.value)}</span>
                   </div>
                 ))}
               </div>
@@ -267,22 +267,22 @@ export function Analytics() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
             className="rounded-2xl p-5"
-            style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+            style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
           >
-            <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Vendor Comparison</h3>
+            <h3 className="text-[var(--text-primary)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Vendor Comparison</h3>
             <div className="space-y-3.5">
               {vendorComparison.map(vc => {
                 const max = vendorComparison[0]?.total || 1;
                 return (
                   <div key={vc.name}>
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[#6B6560] truncate" style={{ fontSize: 14, fontWeight: 500 }}>{vc.name}</span>
+                      <span className="text-[var(--text-secondary)] truncate" style={{ fontSize: 14, fontWeight: 500 }}>{vc.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-[#5C9A6F]" style={{ fontSize: 13, fontWeight: 600 }}>+{formatCurrency(vc.cut)}</span>
-                        <span className="text-[#8B8579]" style={{ fontSize: 13 }}>{formatCurrency(vc.total)}</span>
+                        <span className="text-[var(--text-muted)]" style={{ fontSize: 13 }}>{formatCurrency(vc.total)}</span>
                       </div>
                     </div>
-                    <div className="h-3 rounded-full overflow-hidden" style={{ background: '#F0EBE3' }}>
+                    <div className="h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-muted)' }}>
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{ width: `${(vc.total / max) * 100}%` }}
@@ -305,9 +305,9 @@ export function Analytics() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
         className="rounded-2xl p-5"
-        style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+        style={{ background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
       >
-        <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>
+        <h3 className="text-[var(--text-primary)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>
           {period === 'This Month' ? 'Daily Trend' : 'Monthly Trend'}
         </h3>
         <ResponsiveContainer width="100%" height={160}>
