@@ -84,17 +84,22 @@ export function LoginPage() {
     </motion.div>
   );
 
-  // Compact square keypad — fixed size buttons, not stretched
+  // Responsive keypad — fills available width, adapts to any phone size
   const Keypad = () => {
     const keys = ['1','2','3','4','5','6','7','8','9','','0','del'];
+    // Button width = 28% of screen width, capped at 100px. Height = 80% of width.
+    const btnW = 'min(28vw, 100px)';
+    const btnH = 'min(22vw, 80px)';
+    const gap = 'min(3vw, 14px)';
     return (
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, 72px)',
-        gridTemplateRows: 'repeat(4, 64px)',
-        gap: 12,
+        gridTemplateColumns: `repeat(3, ${btnW})`,
+        gridTemplateRows: `repeat(4, ${btnH})`,
+        gap: gap,
         justifyContent: 'center',
         margin: '0 auto',
+        padding: '0 8px',
       }}>
         {keys.map((key, i) => {
           const isEmpty = key === '';
@@ -108,13 +113,13 @@ export function LoginPage() {
                 else if (!isEmpty) handleDigit(key);
               }}
               style={{
-                width: 72, height: 64,
-                borderRadius: 16,
-                fontSize: isDel ? 18 : 26,
+                width: btnW, height: btnH,
+                borderRadius: 'min(5vw, 18px)',
+                fontSize: isDel ? 'min(5vw, 22px)' : 'min(7vw, 30px)',
                 fontWeight: isDel ? 400 : 500,
-                color: '#1A1816',
-                background: isEmpty ? 'transparent' : '#FFFFFF',
-                boxShadow: isEmpty ? 'none' : '0 1px 4px rgba(26,24,22,0.08)',
+                color: 'var(--text-primary, #1A1816)',
+                background: isEmpty ? 'transparent' : 'var(--bg-card, #FFFFFF)',
+                boxShadow: isEmpty ? 'none' : '0 2px 8px rgba(26,24,22,0.09)',
                 border: 'none',
                 cursor: isEmpty ? 'default' : 'pointer',
                 visibility: isEmpty ? 'hidden' : 'visible',

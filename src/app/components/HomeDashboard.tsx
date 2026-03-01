@@ -253,7 +253,7 @@ export function HomeDashboard() {
               <div className="flex justify-center pt-3 pb-1">
                 <div className="w-10 h-1 rounded-full bg-[var(--border)]" />
               </div>
-              <div className="px-6 pb-7">
+              <div className="px-6" style={{ paddingBottom: 'max(80px, calc(72px + env(safe-area-inset-bottom)))' }}>
                 <div className="flex items-center justify-between mb-5">
                   <h3 className="text-[var(--text-primary)]" style={{ fontSize: 20, fontWeight: 700 }}>
                     {editingVendor ? 'Edit Vendor' : 'Add Vendor'}

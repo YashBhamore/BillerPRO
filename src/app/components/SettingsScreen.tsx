@@ -455,7 +455,7 @@ export function SettingsScreen() {
                   boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
                   // Extra bottom padding to clear the nav bar + device home indicator
                   padding: '20px 24px 48px',
-                  paddingBottom: 'max(48px, calc(48px + env(safe-area-inset-bottom)))',
+                  paddingBottom: 'max(88px, calc(80px + env(safe-area-inset-bottom)))',
                   pointerEvents: 'all',
                 }}>
                 <div style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--border)', margin: '0 auto 18px' }} />
@@ -514,7 +514,7 @@ export function SettingsScreen() {
                   borderRadius: '22px 22px 0 0', background: 'var(--bg-card)',
                   boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
                   padding: '20px 24px 48px',
-                  paddingBottom: 'max(48px, calc(48px + env(safe-area-inset-bottom)))',
+                  paddingBottom: 'max(88px, calc(80px + env(safe-area-inset-bottom)))',
                   pointerEvents: 'all',
                   overflowY: 'auto', maxHeight: '85vh',
                 }}>
