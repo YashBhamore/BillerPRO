@@ -25,46 +25,48 @@ export function Analytics() {
   const [customTo, setCustomTo] = useState('');
   const [filtersActive, setFiltersActive] = useState(false);
 
-  function getRangeDates() {
-    const t = new Date(); t.setHours(0,0,0,0);
-    const fmt = (d: Date) => d.toISOString().split('T')[0];
-    const today = fmt(t);
-    const yest = fmt(new Date(t.getTime() - 86400000));
-    const week = fmt(new Date(t.getTime() - 6*86400000));
-    const month = fmt(new Date(t.getFullYear(), t.getMonth(), 1));
-    return {
-      today: { from: today, to: today },
+  // ── Date range computed inside useMemo so it always uses fresh state ───────
+  // Bug fix: getRangeDates was a plain function — rangeFrom/rangeTo could be
+  // stale inside filteredBills useMemo. Now everything is in one memo.
+  const { filteredBills, rangeFrom, rangeTo } = useMemo(() => {
+    const t = new Date();
+    // Use local date parts to avoid UTC offset shifting the date
+    const localFmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const today = localFmt(t);
+    const yest  = localFmt(new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1));
+    const week  = localFmt(new Date(t.getFullYear(), t.getMonth(), t.getDate() - 6));
+    const month = localFmt(new Date(t.getFullYear(), t.getMonth(), 1));
+
+    const ranges: Record<string, {from:string; to:string}> = {
+      today:     { from: today, to: today },
       yesterday: { from: yest, to: yest },
-      week: { from: week, to: today },
-      month: { from: month, to: today },
-      custom: { from: customFrom, to: customTo },
-    }[filterRange] || { from: month, to: today };
-  }
+      week:      { from: week, to: today },
+      month:     { from: month, to: today },
+      custom:    { from: customFrom, to: customTo },
+    };
+    const { from, to } = ranges[filterRange] || ranges.month;
 
-  const { from: rangeFrom, to: rangeTo } = getRangeDates();
-
-  // Bills after filter applied
-  const filteredBills = useMemo(() => {
-    if (!filtersActive) return state.bills.filter(b => b.date.startsWith(state.selectedMonth));
-    return state.bills.filter(b => {
-      const inRange = b.date >= rangeFrom && b.date <= rangeTo;
-      const inVendor = filterVendor === 'all' || b.vendorId === filterVendor;
-      return inRange && inVendor;
-    });
-  }, [state.bills, state.selectedMonth, filtersActive, rangeFrom, rangeTo, filterVendor]);
+    let bills: typeof state.bills;
+    if (!filtersActive) {
+      bills = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
+    } else {
+      bills = state.bills.filter(b => {
+        // Normalise stored date to local YYYY-MM-DD for safe comparison
+        const bDate = b.date.slice(0, 10);
+        const inRange  = bDate >= from && bDate <= to;
+        const inVendor = filterVendor === 'all' || b.vendorId === filterVendor;
+        return inRange && inVendor;
+      });
+    }
+    return { filteredBills: bills, rangeFrom: from, rangeTo: to };
+  }, [state.bills, state.selectedMonth, filtersActive, filterRange, customFrom, customTo, filterVendor]);
 
   const monthlyData = useMemo(() => {
-    const monthCount = {
-      'This Month': 1,
-      '3 Months': 3,
-      '6 Months': 6,
-      'Year': 12,
-    }[period] || 6;
-
-    const months: { month: string; totalBills: number; earnings: number }[] = [];
     const now = new Date();
-
-    for (let i = monthCount - 1; i >= 0; i--) {
+    const count = period === 'This Month' ? 1 : period === '3 Months' ? 3 : period === 'Year' ? 12 : 6;
+    const months: { month: string; totalBills: number; earnings: number }[] = [];
+    for (let i = count - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const monthBills = state.bills.filter(b => b.date.startsWith(key));
@@ -73,13 +75,8 @@ export function Analytics() {
         const v = state.vendors.find(v => v.id === b.vendorId);
         return s + (v ? b.amount * v.cutPercent / 100 : 0);
       }, 0);
-      months.push({
-        month: d.toLocaleString('en', { month: 'short' }),
-        totalBills: Math.round(totalBills),
-        earnings: Math.round(earnings),
-      });
+      months.push({ month: d.toLocaleString('en', { month: 'short' }), totalBills: Math.round(totalBills), earnings: Math.round(earnings) });
     }
-
     return months;
   }, [state.bills, state.vendors, period]);
 
@@ -150,7 +147,7 @@ export function Analytics() {
   }, [state.bills, getVendor]);
 
   const customTooltipStyle = {
-    backgroundColor: '#1A1816',
+    backgroundColor: 'var(--text-primary, #1A1816)',
     border: 'none',
     borderRadius: 8,
     padding: '8px 12px',
@@ -164,8 +161,8 @@ export function Analytics() {
       {/* Header with filter button */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <div>
-          <h2 className="text-[#1A1816]" style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Analytics</h2>
-          <p className="text-[#8B8579]" style={{ fontSize: 14, margin: '2px 0 0' }}>Your business performance</p>
+          <h2 className="text-[var(--text-primary,#1A1816)]" style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Analytics</h2>
+          <p className="text-[var(--text-muted,#8B8579)]" style={{ fontSize: 14, margin: '2px 0 0' }}>Your business performance</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {filtersActive && (
@@ -175,7 +172,7 @@ export function Analytics() {
             </button>
           )}
           <button onClick={() => setShowFilter(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600, padding: '7px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: filtersActive ? '#FDF5F0' : '#F5F0EB', color: filtersActive ? '#D97757' : '#6B6560' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600, padding: '7px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: filtersActive ? '#FDF5F0' : 'var(--bg-secondary, #F5F0EB)', color: filtersActive ? '#D97757' : 'var(--text-secondary, #6B6560)' }}>
             <Filter style={{ width: 14, height: 14 }} /> Filter{filtersActive ? ' ●' : ''}
           </button>
         </div>
@@ -188,7 +185,21 @@ export function Analytics() {
           <p style={{ fontSize: 12, color: '#D97757', fontWeight: 600, margin: 0 }}>
             🔍 {filterVendor === 'all' ? 'All Vendors' : (state.vendors.find(v => v.id === filterVendor)?.name || '')}
             {' · '}
-            {{ today: 'Today', yesterday: 'Yesterday', week: 'Last 7 Days', month: 'This Month', custom: `${customFrom} → ${customTo}` }[filterRange]}
+            {(() => {
+              const fmtPill = (iso: string) => {
+                if (!iso) return '?';
+                const [y,m,d] = iso.split('-').map(Number);
+                return new Date(y,m-1,d).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+              };
+              const labels: Record<string,string> = {
+                today: 'Today', yesterday: 'Yesterday',
+                week: 'Last 7 Days', month: 'This Month',
+                custom: customFrom === customTo
+                  ? fmtPill(customFrom)
+                  : `${fmtPill(customFrom)} → ${fmtPill(customTo)}`,
+              };
+              return labels[filterRange] || filterRange;
+            })()}
           </p>
           <p style={{ fontSize: 11, color: '#ADA79F', margin: '2px 0 0' }}>
             {filteredBills.length} bills · ₹{filteredBills.reduce((s,b)=>s+b.amount,0).toLocaleString('en-IN')} total
@@ -204,9 +215,9 @@ export function Analytics() {
             className="px-4 py-2.5 rounded-lg flex-shrink-0 whitespace-nowrap transition-all"
             style={{
               fontSize: 14, fontWeight: 600,
-              background: period === p ? '#1A1816' : '#FFFFFF',
-              color: period === p ? '#FFFFFF' : '#6B6560',
-              border: period === p ? 'none' : '1px solid #E8E2D9',
+              background: period === p ? 'var(--text-primary, #1A1816)' : 'var(--bg-card, #FFFFFF)',
+              color: period === p ? 'var(--bg-card, #FFFFFF)' : 'var(--text-secondary, #6B6560)',
+              border: period === p ? 'none' : '1px solid var(--border, #E8E2D9)',
             }}
           >
             {p}
@@ -220,7 +231,7 @@ export function Analytics() {
           { icon: Trophy, label: 'Top Vendor', value: stats.topVendor, color: '#D4A853', bg: '#FBF5E8' },
           { icon: Calendar, label: 'Best Month', value: stats.bestMonth, sub: stats.bestMonthAmt, color: '#5C9A6F', bg: '#EEF5F0' },
           { icon: Receipt, label: 'Total Bills', value: String(stats.totalBills), color: '#D97757', bg: '#FDF5F0' },
-          { icon: TrendingUp, label: 'Avg Monthly', value: stats.avgMonthly, color: '#9B7E6B', bg: '#F5F0EB' },
+          { icon: TrendingUp, label: 'Avg Monthly', value: stats.avgMonthly, color: '#9B7E6B', bg: 'var(--bg-secondary, #F5F0EB)' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -228,14 +239,14 @@ export function Analytics() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
             className="rounded-xl p-4"
-            style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+            style={{ background: 'var(--bg-card, #FFFFFF)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
           >
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2.5" style={{ background: s.bg }}>
               <s.icon className="w-[18px] h-[18px]" style={{ color: s.color }} />
             </div>
-            <p className="text-[#8B8579] mb-0.5" style={{ fontSize: 13, fontWeight: 500 }}>{s.label}</p>
-            <p className="text-[#1A1816] truncate" style={{ fontSize: 17, fontWeight: 700 }}>{s.value}</p>
-            {s.sub && <p className="text-[#8B8579]" style={{ fontSize: 13 }}>{s.sub}</p>}
+            <p className="text-[var(--text-muted,#8B8579)] mb-0.5" style={{ fontSize: 13, fontWeight: 500 }}>{s.label}</p>
+            <p className="text-[var(--text-primary,#1A1816)] truncate" style={{ fontSize: 17, fontWeight: 700 }}>{s.value}</p>
+            {s.sub && <p className="text-[var(--text-muted,#8B8579)]" style={{ fontSize: 13 }}>{s.sub}</p>}
           </motion.div>
         ))}
       </div>
@@ -245,12 +256,12 @@ export function Analytics() {
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         className="rounded-2xl p-5 mb-4"
-        style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+        style={{ background: 'var(--bg-card, #FFFFFF)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
       >
-        <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Monthly Overview</h3>
+        <h3 className="text-[var(--text-primary,#1A1816)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Monthly Overview</h3>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={monthlyData} barGap={2}>
-            <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#8B8579' }} axisLine={false} tickLine={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 12, fill: 'var(--text-muted, #8B8579)' }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: '#C4BFB6' }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
             <Tooltip contentStyle={customTooltipStyle} formatter={(v: number) => formatCurrency(v)} />
             <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 13, paddingTop: 8 }} />
@@ -267,9 +278,9 @@ export function Analytics() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
           className="rounded-2xl p-5"
-          style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+          style={{ background: 'var(--bg-card, #FFFFFF)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
         >
-          <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Earnings by Vendor</h3>
+          <h3 className="text-[var(--text-primary,#1A1816)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Earnings by Vendor</h3>
           <div className="flex items-center gap-4">
             <div className="relative">
               <PieChart width={130} height={130}>
@@ -281,7 +292,7 @@ export function Analytics() {
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
                   <p className="text-[#C4BFB6]" style={{ fontSize: 10 }}>Total</p>
-                  <p className="text-[#1A1816]" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(totalPieEarnings)}</p>
+                  <p className="text-[var(--text-primary,#1A1816)]" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(totalPieEarnings)}</p>
                 </div>
               </div>
             </div>
@@ -289,8 +300,8 @@ export function Analytics() {
               {vendorPieData.map(d => (
                 <div key={d.name} className="flex items-center gap-2">
                   <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
-                  <span className="text-[#6B6560] truncate flex-1" style={{ fontSize: 13 }}>{d.name}</span>
-                  <span className="text-[#1A1816] flex-shrink-0" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(d.value)}</span>
+                  <span className="text-[var(--text-secondary,#6B6560)] truncate flex-1" style={{ fontSize: 13 }}>{d.name}</span>
+                  <span className="text-[var(--text-primary,#1A1816)] flex-shrink-0" style={{ fontSize: 13, fontWeight: 700 }}>{formatCurrency(d.value)}</span>
                 </div>
               ))}
             </div>
@@ -302,19 +313,19 @@ export function Analytics() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
           className="rounded-2xl p-5"
-          style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+          style={{ background: 'var(--bg-card, #FFFFFF)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
         >
-          <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Vendor Comparison</h3>
+          <h3 className="text-[var(--text-primary,#1A1816)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Vendor Comparison</h3>
           <div className="space-y-3.5">
             {vendorComparison.map(vc => {
               const max = vendorComparison[0]?.total || 1;
               return (
                 <div key={vc.name}>
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[#6B6560] truncate" style={{ fontSize: 14, fontWeight: 500 }}>{vc.name}</span>
-                    <span className="text-[#8B8579] flex-shrink-0" style={{ fontSize: 13 }}>{formatCurrency(vc.total)}</span>
+                    <span className="text-[var(--text-secondary,#6B6560)] truncate" style={{ fontSize: 14, fontWeight: 500 }}>{vc.name}</span>
+                    <span className="text-[var(--text-muted,#8B8579)] flex-shrink-0" style={{ fontSize: 13 }}>{formatCurrency(vc.total)}</span>
                   </div>
-                  <div className="h-3 rounded-full overflow-hidden" style={{ background: '#F0EBE3' }}>
+                  <div className="h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-muted, #F0EBE3)' }}>
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${(vc.total / max) * 100}%` }}
@@ -336,9 +347,9 @@ export function Analytics() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
         className="rounded-2xl p-5"
-        style={{ background: '#FFFFFF', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
+        style={{ background: 'var(--bg-card, #FFFFFF)', boxShadow: '0 1px 3px rgba(26,24,22,0.05)' }}
       >
-        <h3 className="text-[#1A1816] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Daily Trend</h3>
+        <h3 className="text-[var(--text-primary,#1A1816)] mb-4" style={{ fontSize: 18, fontWeight: 700 }}>Daily Trend</h3>
         <ResponsiveContainer width="100%" height={160}>
           <AreaChart data={dailyTrend}>
             <XAxis dataKey="day" tick={{ fontSize: 11, fill: '#C4BFB6' }} axisLine={false} tickLine={false} />
@@ -422,9 +433,25 @@ export function Analytics() {
                   </motion.div>
                 )}
 
-                <motion.button whileTap={{ scale: 0.97 }}
-                  onClick={() => { setFiltersActive(true); setShowFilter(false); }}
-                  style={{ width: '100%', padding: '15px 0', borderRadius: 14, color: '#fff', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 16, fontWeight: 700, marginTop: 4 }}>
+                {filterRange === 'custom' && (!customFrom || !customTo) && (
+                  <p style={{ fontSize: 12, color: '#C45C4A', textAlign: 'center', margin: '0 0 8px', fontWeight: 500 }}>
+                    Please select both From and To dates
+                  </p>
+                )}
+                <motion.button
+                  whileTap={{ scale: filterRange === 'custom' && (!customFrom || !customTo) ? 1 : 0.97 }}
+                  onClick={() => {
+                    if (filterRange === 'custom' && (!customFrom || !customTo)) return;
+                    if (filterRange === 'custom' && customFrom > customTo) {
+                      // Swap if user picked dates in wrong order
+                      const tmp = customFrom;
+                      setCustomFrom(customTo);
+                      setCustomTo(tmp);
+                    }
+                    setFiltersActive(true);
+                    setShowFilter(false);
+                  }}
+                  style={{ width: '100%', padding: '15px 0', borderRadius: 14, color: '#fff', border: 'none', cursor: filterRange === 'custom' && (!customFrom || !customTo) ? 'not-allowed' : 'pointer', background: filterRange === 'custom' && (!customFrom || !customTo) ? '#C4BFB6' : 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 16, fontWeight: 700, marginTop: 4, opacity: filterRange === 'custom' && (!customFrom || !customTo) ? 0.6 : 1 }}>
                   Apply Filter
                 </motion.button>
               </motion.div>
