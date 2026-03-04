@@ -100,25 +100,23 @@ function maskSensitiveData(rawText: string): MaskResult {
 // Costs $0, uses simple regex on raw text
 // ─────────────────────────────────────────────────────────────────────────────
 function quickExtractBillNumber(rawText: string): string | null {
-  // Cast a wide net — cover all common Indian GST invoice formats
-  // PDF.js may output text in different spacing/order, so we're permissive
+  // Cover numeric + alphanumeric invoice numbers (e.g. 5159, INV-5159, FF/2026/001)
   const patterns = [
-    /Invoice\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
-    /Invoice\s*Number\s*[:#.\-]?\s*(\d{2,})/i,
-    /Bill\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
-    /Bill\s*Number\s*[:#.\-]?\s*(\d{2,})/i,
-    /Inv\.?\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
-    /Receipt\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
-    /Voucher\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
-    /Tax\s*Invoice\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
-    // Formats like "No. : 5159" or "No : 5159" standalone
-    /\bNo\.?\s*[:#]\s*(\d{3,})\b/i,
+    /Invoice\s*No\.?\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Invoice\s*Number\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Bill\s*No\.?\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Bill\s*Number\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Inv\.?\s*No\.?\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Receipt\s*No\.?\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Voucher\s*No\.?\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /Tax\s*Invoice\s*No\.?\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,24})/i,
+    /\bNo\.?\s*[:#]\s*([A-Z0-9][A-Z0-9/\-]{1,24})\b/i,
   ];
   for (const pattern of patterns) {
     const match = rawText.match(pattern);
     if (match?.[1]) {
-      const num = match[1].trim();
-      if (num.length >= 2 && num.length <= 12) return num; // sanity length check
+      const num = match[1].trim().replace(/[),.;:]+$/, '');
+      if (num.length >= 2 && num.length <= 25 && /\d/.test(num)) return num;
     }
   }
   return null;
@@ -126,7 +124,7 @@ function quickExtractBillNumber(rawText: string): string | null {
 
 // Normalize bill number for comparison — remove leading zeros, lowercase, trim
 function normalizeBillNo(n: string): string {
-  return n.replace(/^0+/, '').toLowerCase().trim();
+  return n.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/^0+/, '').trim();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,6 +301,7 @@ export function UploadBill() {
 
     try {
       let result: any;
+      let quickBillNoFromPdf: string | null = null;
 
       if (file.type === 'application/pdf') {
         // ── PDF FLOW: local extract → mask → Claude text ──────────────────
@@ -312,19 +311,17 @@ export function UploadBill() {
 
         // ── DUPLICATE CHECK (free — runs before Claude) ───────────────────
         setStageLabel('Checking for duplicate bill...');
-        const quickBillNo = quickExtractBillNumber(rawText);
-        if (quickBillNo) {
-          const normalizedNew = normalizeBillNo(quickBillNo);
+        quickBillNoFromPdf = quickExtractBillNumber(rawText);
+        if (quickBillNoFromPdf) {
+          const normalizedNew = normalizeBillNo(quickBillNoFromPdf);
           const existing = state.bills.find(b => {
-            // Check dedicated billNumber field first (reliable)
             if (b.billNumber && normalizeBillNo(b.billNumber) === normalizedNew) return true;
-            // Fallback: check notes string for older bills saved before this field existed
-            if (b.notes?.includes(`Bill #${quickBillNo}`)) return true;
-            if (b.notes?.includes(`Bill #${normalizedNew}`)) return true;
+            const noteBill = b.notes?.match(/Bill\s*#\s*([A-Za-z0-9/\-]+)/i)?.[1];
+            if (noteBill && normalizeBillNo(noteBill) === normalizedNew) return true;
             return false;
           });
           if (existing) {
-            setDuplicateBill({ billNo: quickBillNo, existingBill: existing });
+            setDuplicateBill({ billNo: quickBillNoFromPdf, existingBill: existing });
             setPendingFile(file);
             setStage('duplicate');
             return; // Stop here — don't call Claude, save the credit
@@ -355,7 +352,7 @@ export function UploadBill() {
       setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
       setExtractedCustomer(result.customerName || '');
       setExtractedAmount(result.amount || '');
-      setExtractedBillNo(result.billNumber || '');
+      setExtractedBillNo(result.billNumber || quickBillNoFromPdf || '');
       setVendorHint(result.vendorHint || '');
       setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
       setExtractedVendorId(matchVendor(result.vendorHint || ''));
@@ -374,6 +371,20 @@ export function UploadBill() {
     if (!extractedCustomer.trim()) { toast.error('Customer name is required'); return; }
     if (amount <= 0) { toast.error('Bill amount must be greater than 0'); return; }
     if (!extractedDate) { toast.error('Please enter the bill date'); return; }
+
+    const normalizedBill = extractedBillNo ? normalizeBillNo(extractedBillNo) : '';
+    if (normalizedBill) {
+      const existingBill = state.bills.find(b => {
+        if (b.billNumber && normalizeBillNo(b.billNumber) === normalizedBill) return true;
+        const noteBill = b.notes?.match(/Bill\s*#\s*([A-Za-z0-9/\-]+)/i)?.[1];
+        if (noteBill && normalizeBillNo(noteBill) === normalizedBill) return true;
+        return false;
+      });
+      if (existingBill) {
+        toast.error(`Duplicate bill #${extractedBillNo} already exists`);
+        return;
+      }
+    }
 
     addBill({
       vendorId: extractedVendorId,
