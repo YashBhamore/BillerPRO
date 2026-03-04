@@ -1,4 +1,11 @@
 import * as XLSX from 'xlsx';
+
+// Timezone-safe month comparison — matches how dates display on screen
+function localMonthStr(dateStr: string) {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import {
   saveBillToDrive, deleteBillFromDrive,
@@ -224,7 +231,7 @@ export function exportMonthToXLSX(bills: Bill[], vendors: Vendor[], month: strin
   const [yr, mo] = month.split('-');
   const label = new Date(Number(yr), Number(mo) - 1, 1)
     .toLocaleString('en-IN', { month: 'long', year: 'numeric' });
-  exportToXLSX(bills.filter(b => b.date.startsWith(month)), vendors, label);
+  exportToXLSX(bills.filter(b => localMonthStr(b.date) === month), vendors, label);
 }
 
 // Keep old names as aliases so nothing else breaks
@@ -235,7 +242,7 @@ export function exportMonthToCSV(bills: Bill[], vendors: Vendor[], month: string
 
 // ── Helper selectors ─────────────────────────────────────────────────────────
 function getBillsForMonthFn(bills: Bill[], month: string): Bill[] {
-  return bills.filter(b => b.date.startsWith(month));
+  return bills.filter(b => localMonthStr(b.date) === month);
 }
 function getEarningsForMonthFn(bills: Bill[], vendors: Vendor[], month: string): number {
   return getBillsForMonthFn(bills, month).reduce((sum, b) => {

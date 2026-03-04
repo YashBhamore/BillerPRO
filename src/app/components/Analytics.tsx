@@ -11,6 +11,17 @@ function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
+// Convert any stored date string to local YYYY-MM-DD / YYYY-MM
+// Fixes timezone bug: "2026-02-26" UTC = "25 Feb" IST in display
+function localDateStr(dateStr: string) {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function localMonthStr(dateStr: string) {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
 const periods = ['This Month', '3 Months', '6 Months', 'Year'];
 
 export function Analytics() {
@@ -47,14 +58,16 @@ export function Analytics() {
     };
     const { from, to } = ranges[filterRange] || ranges.month;
 
+    // Use shared localDateStr helper for consistent timezone handling
+
     let bills: typeof state.bills;
     if (!filtersActive) {
-      bills = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
+      bills = state.bills.filter(b => localMonthStr(b.date) === state.selectedMonth);
     } else {
       bills = state.bills.filter(b => {
-        // Normalise stored date to local YYYY-MM-DD for safe comparison
-        const bDate = b.date.slice(0, 10);
-        const inRange  = bDate >= from && bDate <= to;
+        // Use local date (same as what AllBills shows) for comparison
+        const bDateLocal = localDateStr(b.date);
+        const inRange  = bDateLocal >= from && bDateLocal <= to;
         const inVendor = filterVendor === 'all' || b.vendorId === filterVendor;
         return inRange && inVendor;
       });
@@ -69,7 +82,7 @@ export function Analytics() {
     for (let i = count - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const monthBills = state.bills.filter(b => b.date.startsWith(key));
+      const monthBills = state.bills.filter(b => localMonthStr(b.date) === key);
       const totalBills = monthBills.reduce((s, b) => s + b.amount, 0);
       const earnings = monthBills.reduce((s, b) => {
         const v = state.vendors.find(v => v.id === b.vendorId);

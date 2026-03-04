@@ -48,7 +48,9 @@ export function AllBills() {
   const grouped = useMemo(() => {
     const map: Record<string, typeof filteredBills> = {};
     filteredBills.forEach(b => {
-      const key = b.date.substring(0, 7);
+      // Use local date for grouping so month buckets match displayed date
+      const d = new Date(b.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
       if (!map[key]) map[key] = [];
       map[key].push(b);
     });

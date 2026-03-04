@@ -333,7 +333,7 @@ export function SettingsScreen() {
         <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 12px' }}>EXPORT DATA</p>
         {[
           { label: 'Export this month', sub: 'Excel file — share with vendors', action: () => {
-            const mb = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
+            const mb = state.bills.filter(b => { const d = new Date(b.date); const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; return m === state.selectedMonth; });
             if (!mb.length) { toast.error('No bills this month'); return; }
             exportMonthToXLSX(state.bills, state.vendors, state.selectedMonth);
             toast.success(`Exporting ${mb.length} bills to Excel…`);
