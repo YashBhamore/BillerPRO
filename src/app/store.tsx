@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import {
   saveBillToDrive, deleteBillFromDrive,
@@ -20,6 +21,7 @@ export interface Bill {
   amount: number;
   date: string;
   notes?: string;
+  billNumber?: string;   // dedicated field — used for duplicate detection
   confidence: 'high' | 'medium' | 'low';
 }
 
@@ -131,30 +133,104 @@ function pickPersistable(state: AppState) {
   };
 }
 
-// ── CSV export helpers ────────────────────────────────────────────────────────
-export function exportToCSV(bills: Bill[], vendors: Vendor[]) {
+// ── Excel (XLSX) export ───────────────────────────────────────────────────────
+// Exports a proper .xlsx file with one sheet per vendor — perfect for sharing
+// with each vendor as monthly proof of sales + commission owed.
+
+export function exportToXLSX(bills: Bill[], vendors: Vendor[], monthLabel?: string) {
   const getV = (id: string) => vendors.find(v => v.id === id);
-  const BOM = '\uFEFF';
-  const rows = [
-    ['Date','Bill Customer','Vendor','Bill Amount','Cut %','Your Earnings'],
-    ...bills.map(b => {
-      const v = getV(b.vendorId);
-      const cut = v ? b.amount * v.cutPercent / 100 : 0;
-      return [b.date, b.customerName, v?.name||'Unknown', b.amount, v?.cutPercent||0, Math.round(cut)];
-    }),
-    ['','','TOTAL', bills.reduce((s,b)=>s+b.amount,0), '',
-      Math.round(bills.reduce((s,b)=>{const v=getV(b.vendorId);return s+(v?b.amount*v.cutPercent/100:0);},0))],
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Full Summary (all vendors together) ─────────────────────────
+  const summaryRows: any[][] = [
+    [`BillerPRO — ${monthLabel || 'All Bills'}`],
+    [`Generated: ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`],
+    [],
+    ['Date', 'Bill No.', 'Customer Name', 'Vendor', 'Bill Amount (₹)', 'Cut %', 'Your Earnings (₹)'],
   ];
-  const csv = BOM + rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `BillerPRO_export_${Date.now()}.csv`; a.click();
-  URL.revokeObjectURL(url);
+
+  const sortedBills = [...bills].sort((a, b) => a.date.localeCompare(b.date));
+  sortedBills.forEach(b => {
+    const v = getV(b.vendorId);
+    const cut = v ? Math.round(b.amount * v.cutPercent / 100) : 0;
+    summaryRows.push([
+      new Date(b.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      b.billNumber || '—',
+      b.customerName,
+      v?.name || 'Unknown',
+      b.amount,
+      v ? v.cutPercent + '%' : '0%',
+      cut,
+    ]);
+  });
+
+  const totalAmt = bills.reduce((s, b) => s + b.amount, 0);
+  const totalEarn = bills.reduce((s, b) => {
+    const v = getV(b.vendorId);
+    return s + (v ? Math.round(b.amount * v.cutPercent / 100) : 0);
+  }, 0);
+  summaryRows.push([]);
+  summaryRows.push(['', '', '', 'TOTAL', totalAmt, '', totalEarn]);
+
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+  wsSummary['!cols'] = [
+    { wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 16 },
+    { wch: 16 }, { wch: 7 }, { wch: 18 },
+  ];
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'All Bills');
+
+  // ── One sheet per vendor — perfect for sharing with each vendor ──────────
+  vendors.forEach(vendor => {
+    const vBills = bills.filter(b => b.vendorId === vendor.id)
+                        .sort((a, b) => a.date.localeCompare(b.date));
+    if (vBills.length === 0) return;
+
+    const rows: any[][] = [
+      [`${vendor.name} — ${monthLabel || 'Bill Statement'}`],
+      [`Commission Rate: ${vendor.cutPercent}%`],
+      [`Generated: ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`],
+      [],
+      ['Date', 'Bill No.', 'Customer Name', 'Bill Amount (₹)', `Commission ${vendor.cutPercent}% (₹)`],
+    ];
+
+    vBills.forEach(b => {
+      const cut = Math.round(b.amount * vendor.cutPercent / 100);
+      rows.push([
+        new Date(b.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        b.billNumber || '—',
+        b.customerName,
+        b.amount,
+        cut,
+      ]);
+    });
+
+    const vTotal = vBills.reduce((s, b) => s + b.amount, 0);
+    const vEarn  = vBills.reduce((s, b) => s + Math.round(b.amount * vendor.cutPercent / 100), 0);
+    rows.push([]);
+    rows.push(['', '', 'TOTAL', vTotal, vEarn]);
+    rows.push([]);
+    rows.push(['', '', `Amount to collect from ${vendor.name}:`, '', vEarn]);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, ws, vendor.name.slice(0, 31));
+  });
+
+  const label = monthLabel ? monthLabel.replace(/[^a-zA-Z0-9]/g, '_') : 'All';
+  XLSX.writeFile(wb, `BillerPRO_${label}.xlsx`);
 }
 
+export function exportMonthToXLSX(bills: Bill[], vendors: Vendor[], month: string) {
+  const [yr, mo] = month.split('-');
+  const label = new Date(Number(yr), Number(mo) - 1, 1)
+    .toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+  exportToXLSX(bills.filter(b => b.date.startsWith(month)), vendors, label);
+}
+
+// Keep old names as aliases so nothing else breaks
+export const exportToCSV = exportToXLSX;
 export function exportMonthToCSV(bills: Bill[], vendors: Vendor[], month: string) {
-  exportToCSV(bills.filter(b => b.date.startsWith(month)), vendors);
+  exportMonthToXLSX(bills, vendors, month);
 }
 
 // ── Helper selectors ─────────────────────────────────────────────────────────

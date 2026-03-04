@@ -7,9 +7,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
-import { exportToCSV, exportMonthToCSV } from '../store';
-
-const GOOGLE_DRIVE_CLIENT_ID = '942319788668-b27a9b61f6ob52cs4d27ludi99s9ou2l.apps.googleusercontent.com';
+import { exportToXLSX, exportMonthToXLSX } from '../store';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
@@ -28,9 +26,9 @@ function timeAgo(iso: string | null): string {
 
 export function SettingsScreen() {
   const {
-    state, setMonthlyTarget,
+    state, setUserProfile, setMonthlyTarget,
     addVendor, updateVendor, deleteVendor, logout, setTheme,
-    connectDrive, disconnectDrive, loadFromDrive,
+    connectDrive, disconnectDrive, loadFromDrive, setDriveClientId,
   } = useApp();
 
   // ── Vendor sheet (add/edit) ──────────────────────────────────────────────
@@ -50,6 +48,7 @@ export function SettingsScreen() {
 
   // ── Drive sheet ──────────────────────────────────────────────────────────
   const [showDriveSheet, setShowDriveSheet] = useState(false);
+  const [driveClientIdInput, setDriveClientIdInput] = useState('');
   const [driveConnecting, setDriveConnecting] = useState(false);
   const [driveLoading, setDriveLoading] = useState(false);
 
@@ -333,16 +332,16 @@ export function SettingsScreen() {
       <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
         <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 12px' }}>EXPORT DATA</p>
         {[
-          { label: 'Export this month', sub: 'Current month as CSV', action: () => {
+          { label: 'Export this month', sub: 'Excel file — share with vendors', action: () => {
             const mb = state.bills.filter(b => b.date.startsWith(state.selectedMonth));
             if (!mb.length) { toast.error('No bills this month'); return; }
-            exportMonthToCSV(state.bills, state.vendors, state.selectedMonth);
-            toast.success(`Exported ${mb.length} bills!`);
+            exportMonthToXLSX(state.bills, state.vendors, state.selectedMonth);
+            toast.success(`Exporting ${mb.length} bills to Excel…`);
           }},
-          { label: 'Export all data', sub: 'All bills — opens in Excel', action: () => {
+          { label: 'Export all data', sub: 'All bills across all months', action: () => {
             if (!state.bills.length) { toast.error('No bills yet'); return; }
-            exportToCSV(state.bills, state.vendors);
-            toast.success(`Exported ${state.bills.length} bills!`);
+            exportToXLSX(state.bills, state.vendors);
+            toast.success(`Exporting ${state.bills.length} bills to Excel…`);
           }},
         ].map((item, i) => (
           <button key={item.label} onClick={item.action}
@@ -537,16 +536,17 @@ export function SettingsScreen() {
                 </div>
                 <motion.button whileTap={{ scale: 0.97 }} disabled={driveConnecting}
                   onClick={async () => {
-                    const id = GOOGLE_DRIVE_CLIENT_ID;
+                    const id = '942319788668-b27a9b61f6ob52cs4d27ludi99s9ou2l.apps.googleusercontent.com';
                     setDriveConnecting(true);
                     try {
                       await connectDrive(id);
+                      setDriveClientIdInput('');
                       setShowDriveSheet(false);
                       toast.success('Google Drive connected! Auto-syncing from now.');
                       const ok = await loadFromDrive();
                       if (ok) toast.success('Loaded existing data from your Drive!');
                     } catch (e: any) {
-                      toast.error(e.message || 'Connection failed');
+                      toast.error(e.message || 'Connection failed — check Client ID');
                     } finally {
                       setDriveConnecting(false);
                     }

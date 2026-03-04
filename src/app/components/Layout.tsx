@@ -19,6 +19,15 @@ const tabs = [
 export function Layout() {
   const { state, setActiveTab } = useApp();
 
+  // Auto-switch to Upload tab when opened from WhatsApp share
+  React.useEffect(() => {
+    if (window.location.search.includes('tab=upload')) {
+      setActiveTab('upload');
+      // Clean URL without reloading
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+
   const renderContent = () => {
     switch (state.activeTab) {
       case 'home': return <HomeDashboard />;

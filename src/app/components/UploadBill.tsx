@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   CloudUpload, FolderOpen, Camera, CheckCircle2,
-  AlertTriangle, Loader2, ShieldCheck,
+  AlertTriangle, Loader2, Key, X, Eye, EyeOff, ShieldCheck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
@@ -55,23 +55,6 @@ interface MaskResult {
   maskedFields: string[]; // what was found and removed (for user display)
 }
 
-function quickExtractBillNumber(rawText: string): string | null {
-  const patterns = [
-    /Invoice\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
-    /Bill\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
-    /Invoice\s*Number\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
-    /Inv\.?\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
-    /Receipt\s*No\.?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = rawText.match(pattern);
-    if (match && match[1] && match[1].length >= 2) {
-      return match[1].trim();
-    }
-  }
-  return null;
-}
-
 function maskSensitiveData(rawText: string): MaskResult {
   let text = rawText;
   const maskedFields: string[] = [];
@@ -112,6 +95,40 @@ function maskSensitiveData(rawText: string): MaskResult {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 3: SEND MASKED TEXT to Claude API for smart extraction
+// ─────────────────────────────────────────────────────────────────────────────
+// Quick local bill number extraction — runs BEFORE Claude to catch duplicates
+// Costs $0, uses simple regex on raw text
+// ─────────────────────────────────────────────────────────────────────────────
+function quickExtractBillNumber(rawText: string): string | null {
+  // Cast a wide net — cover all common Indian GST invoice formats
+  // PDF.js may output text in different spacing/order, so we're permissive
+  const patterns = [
+    /Invoice\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
+    /Invoice\s*Number\s*[:#.\-]?\s*(\d{2,})/i,
+    /Bill\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
+    /Bill\s*Number\s*[:#.\-]?\s*(\d{2,})/i,
+    /Inv\.?\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
+    /Receipt\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
+    /Voucher\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
+    /Tax\s*Invoice\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
+    // Formats like "No. : 5159" or "No : 5159" standalone
+    /No\.?\s*[:#]\s*(\d{3,})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = rawText.match(pattern);
+    if (match?.[1]) {
+      const num = match[1].trim();
+      if (num.length >= 2 && num.length <= 12) return num; // sanity length check
+    }
+  }
+  return null;
+}
+
+// Normalize bill number for comparison — remove leading zeros, lowercase, trim
+function normalizeBillNo(n: string): string {
+  return n.replace(/^0+/, '').toLowerCase().trim();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Calls our own Vercel /api/scan proxy — no CORS issue, API key stays on server
 async function extractWithClaude(
@@ -188,49 +205,71 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function extractSavedBillNo(notes?: string): string | null {
-  if (!notes) return null;
-  const match = notes.match(/Bill\s*#\s*([A-Za-z0-9][A-Za-z0-9/_\-.]*)/i);
-  return match?.[1]?.trim() || null;
-}
-
-function normalizeBillNo(value: string): string {
-  const compact = value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (!compact) return '';
-  if (/^\d+$/.test(compact)) return compact.replace(/^0+/, '') || '0';
-  return compact;
-}
-
-function findDuplicateBillByNumber(
-  bills: Array<{ notes?: string }>,
-  candidateBillNo: string,
-) {
-  const normalizedCandidate = normalizeBillNo(candidateBillNo);
-  if (!normalizedCandidate) return null;
-  return bills.find((b) => {
-    const saved = extractSavedBillNo(b.notes);
-    if (!saved) return false;
-    return normalizeBillNo(saved) === normalizedCandidate;
-  }) || null;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
-type DuplicateInfo = { billNo: string; existingBill: any };
-
 export function UploadBill() {
-  const { state, addBill, getVendor, setActiveTab } = useApp();
+  const { state, addBill, getVendor, setActiveTab, setClaudeApiKey } = useApp();
 
   const [stage, setStage] = useState<Stage>('upload');
+  const [showApiSheet, setShowApiSheet] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState('');
+  const [showKeyText, setShowKeyText] = useState(false);
   const [fileName, setFileName] = useState('');
   const [maskedFields, setMaskedFields] = useState<string[]>([]);
   const [stageLabel, setStageLabel] = useState('');
-  const [duplicateBill, setDuplicateBill] = useState<DuplicateInfo | null>(null);
+  const [duplicateBill, setDuplicateBill] = useState<{ billNo: string; existingBill: any } | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // ── WhatsApp / Share Target handler ────────────────────────────────────
+  // When dad forwards a bill PDF from WhatsApp → BillerPRO,
+  // the service worker intercepts the share and posts the file here.
+  // We also check for a pending share stored while app was closed.
+  useEffect(() => {
+    // Listen for file from service worker (app was open when shared)
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'SHARE_TARGET_FILE') {
+        try {
+          const { fileName, fileType, fileData } = event.data;
+          const file = new File([fileData], fileName, { type: fileType });
+          handleFile(file);
+        } catch (err) {
+          console.error('Share file error:', err);
+        }
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handleMessage);
+
+    // Check for pending share stored while app was closed
+    const checkPendingShare = async () => {
+      try {
+        const cache = await caches.open('billerpro-share-tmp');
+        const pending = await cache.match('/pending-share');
+        if (pending) {
+          const fileName = pending.headers.get('X-File-Name') || 'shared-bill.pdf';
+          const fileType = pending.headers.get('Content-Type') || 'application/pdf';
+          const blob = await pending.blob();
+          const file = new File([blob], fileName, { type: fileType });
+          await cache.delete('/pending-share');
+          // Small delay to let app render first
+          setTimeout(() => handleFile(file), 500);
+        }
+      } catch { /* no pending share */ }
+    };
+
+    // Only check if launched from share target
+    if (window.location.search.includes('tab=upload')) {
+      checkPendingShare();
+    }
+
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', handleMessage);
+    };
+  }, []); // eslint-disable-line
+
 
   // Extracted fields
   const [extractedDate, setExtractedDate] = useState('');
@@ -246,6 +285,7 @@ export function UploadBill() {
   const selectedVendor = getVendor(extractedVendorId);
   const amount = parseFloat(extractedAmount) || 0;
   const cut = selectedVendor ? amount * selectedVendor.cutPercent / 100 : 0;
+  const hasApiKey = !!state.claudeApiKey;
 
   function matchVendor(hint: string): string {
     if (!hint || state.vendors.length === 0) return '';
@@ -259,48 +299,15 @@ export function UploadBill() {
     return partial?.id || state.vendors[0]?.id || '';
   }
 
-  function applyExtractionResult(result: any) {
-    setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
-    setExtractedCustomer(result.customerName || '');
-    setExtractedAmount(result.amount || '');
-    setExtractedBillNo(result.billNumber || '');
-    setVendorHint(result.vendorHint || '');
-    setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
-    setExtractedVendorId(matchVendor(result.vendorHint || ''));
-    setStage('review');
-  }
-
-  async function processPdfFile(file: File, skipDuplicateCheck = false): Promise<any | null> {
-    setStage('extracting');
-    setStageLabel('Reading PDF text locally...');
-    const rawText = await extractTextFromPDF(file);
-
-    if (!skipDuplicateCheck) {
-      setStageLabel('Checking for duplicate bill...');
-      const quickBillNo = quickExtractBillNumber(rawText);
-      if (quickBillNo) {
-        const existing = findDuplicateBillByNumber(state.bills, quickBillNo);
-        if (existing) {
-          setDuplicateBill({ billNo: quickBillNo, existingBill: existing });
-          setPendingFile(file);
-          setStage('duplicate');
-          return null;
-        }
-      }
-    }
-
-    setStageLabel('Masking sensitive fields...');
-    const { maskedText, maskedFields: mf } = maskSensitiveData(rawText);
-    setMaskedFields(mf);
-
-    setStage('processing');
-    setStageLabel('Sending to Claude AI...');
-    return extractWithClaude(maskedText, '', state.vendors.map(v => v.name));
-  }
-
   // ── Main file handler ──────────────────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file) return;
+
+    if (!state.claudeApiKey) {
+      setShowApiSheet(true);
+      toast.error('Set your API key first');
+      return;
+    }
 
     const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
@@ -314,17 +321,44 @@ export function UploadBill() {
 
     setFileName(file.name);
     setMaskedFields([]);
-    setDuplicateBill(null);
-    setPendingFile(null);
 
     try {
       let result: any;
 
       if (file.type === 'application/pdf') {
-        // ── PDF FLOW: local extract → duplicate check → mask → Claude text ─
-        const pdfResult = await processPdfFile(file);
-        if (!pdfResult) return;
-        result = pdfResult;
+        // ── PDF FLOW: local extract → mask → Claude text ──────────────────
+        setStage('extracting');
+        setStageLabel('Reading PDF text locally...');
+        const rawText = await extractTextFromPDF(file);
+
+        // ── DUPLICATE CHECK (free — runs before Claude) ───────────────────
+        setStageLabel('Checking for duplicate bill...');
+        const quickBillNo = quickExtractBillNumber(rawText);
+        if (quickBillNo) {
+          const normalizedNew = normalizeBillNo(quickBillNo);
+          const existing = state.bills.find(b => {
+            // Check dedicated billNumber field first (reliable)
+            if (b.billNumber && normalizeBillNo(b.billNumber) === normalizedNew) return true;
+            // Fallback: check notes string for older bills saved before this field existed
+            if (b.notes?.includes(`Bill #${quickBillNo}`)) return true;
+            if (b.notes?.includes(`Bill #${normalizedNew}`)) return true;
+            return false;
+          });
+          if (existing) {
+            setDuplicateBill({ billNo: quickBillNo, existingBill: existing });
+            setPendingFile(file);
+            setStage('duplicate');
+            return; // Stop here — don't call Claude, save the credit
+          }
+        }
+
+        setStageLabel('Masking sensitive fields...');
+        const { maskedText, maskedFields: mf } = maskSensitiveData(rawText);
+        setMaskedFields(mf);
+
+        setStage('processing');
+        setStageLabel('Sending to Claude AI...');
+        result = await extractWithClaude(maskedText, state.claudeApiKey, state.vendors.map(v => v.name));
 
       } else {
         // ── IMAGE FLOW: send to Claude with strict no-bank-data prompt ────
@@ -332,13 +366,21 @@ export function UploadBill() {
         setStage('extracting');
         setStageLabel('Reading image text on device (OCR)...');
         const { result: imgResult, maskedFields: imgMf } = await extractFromImage(
-          file, '', state.vendors.map(v => v.name)
+          file, state.claudeApiKey, state.vendors.map(v => v.name)
         );
         result = imgResult;
         setMaskedFields(imgMf.length > 0 ? imgMf : ['No sensitive fields found']);
       }
 
-      applyExtractionResult(result);
+      // Set extracted values
+      setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
+      setExtractedCustomer(result.customerName || '');
+      setExtractedAmount(result.amount || '');
+      setExtractedBillNo(result.billNumber || '');
+      setVendorHint(result.vendorHint || '');
+      setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
+      setExtractedVendorId(matchVendor(result.vendorHint || ''));
+      setStage('review');
 
     } catch (err: any) {
       console.error(err);
@@ -353,13 +395,6 @@ export function UploadBill() {
     if (!extractedCustomer.trim()) { toast.error('Customer name is required'); return; }
     if (amount <= 0) { toast.error('Bill amount must be greater than 0'); return; }
     if (!extractedDate) { toast.error('Please enter the bill date'); return; }
-    if (extractedBillNo.trim()) {
-      const existing = findDuplicateBillByNumber(state.bills, extractedBillNo);
-      if (existing) {
-        toast.error(`Bill #${extractedBillNo} already exists. Change bill number before saving.`);
-        return;
-      }
-    }
 
     addBill({
       vendorId: extractedVendorId,
@@ -367,10 +402,8 @@ export function UploadBill() {
       amount,
       date: extractedDate,
       confidence: confidence.amount,
-      notes: [
-        vendorHint ? `Issuer: ${vendorHint}` : '',
-        extractedBillNo ? `Bill #${extractedBillNo}` : '',
-      ].filter(Boolean).join(' · ') || undefined,
+      billNumber: extractedBillNo.trim() || undefined,
+      notes: vendorHint ? `Issuer: ${vendorHint}` : undefined,
     });
 
     toast.success(`Bill saved! Your cut: ${formatCurrency(Math.round(cut))} 🎉`);
@@ -470,7 +503,7 @@ export function UploadBill() {
                 <button key={item.label} onClick={item.action}
                   style={{
                     padding: '18px 0', borderRadius: 14, background: 'var(--bg-card)',
-                    boxShadow: '0 1px 3px rgba(26,24,22,0.06)', border: 'none', cursor: 'pointer',
+                    boxShadow: '0 1px 3px rgba(26,24,22,0.08)', border: 'none', cursor: 'pointer',
                     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9,
                   }}>
                   <div style={{ width: 42, height: 42, borderRadius: 11, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -532,6 +565,7 @@ export function UploadBill() {
           <motion.div key="duplicate" initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 32 }}>
 
+            {/* Warning icon */}
             <div style={{ width: 72, height: 72, borderRadius: 20, background: '#FBF5E8', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
               <span style={{ fontSize: 36 }}>⚠️</span>
             </div>
@@ -544,15 +578,17 @@ export function UploadBill() {
               Uploading it again would waste an API credit.
             </p>
 
+            {/* Existing bill info */}
             <div style={{ width: '100%', padding: '16px', borderRadius: 14, background: '#FDF5F0', border: '1px solid rgba(217,119,87,0.2)', marginBottom: 24 }}>
               <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', margin: '0 0 8px', letterSpacing: '0.05em' }}>EXISTING SAVED BILL</p>
               <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' }}>{duplicateBill.existingBill.customerName}</p>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 4px' }}>
-                {formatCurrency(duplicateBill.existingBill.amount)} · {duplicateBill.existingBill.date}
+                ₹{duplicateBill.existingBill.amount.toLocaleString('en-IN')} · {duplicateBill.existingBill.date}
               </p>
               <p style={{ fontSize: 12, color: '#ADA79F', margin: 0 }}>{duplicateBill.existingBill.notes}</p>
             </div>
 
+            {/* Action buttons */}
             <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button
                 onClick={() => { setStage('upload'); setFileName(''); setDuplicateBill(null); setPendingFile(null); }}
@@ -561,17 +597,25 @@ export function UploadBill() {
               </button>
               <button
                 onClick={async () => {
+                  // User insists — proceed anyway, skipping duplicate check
                   if (!pendingFile) return;
-                  const file = pendingFile;
                   setDuplicateBill(null);
                   setPendingFile(null);
+                  const rawText = await extractTextFromPDF(pendingFile);
+                  const { maskedText, maskedFields: mf } = maskSensitiveData(rawText);
+                  setMaskedFields(mf);
+                  setStage('processing');
+                  setStageLabel('Sending to Claude AI...');
                   try {
-                    const result = await processPdfFile(file, true);
-                    if (!result) {
-                      setStage('upload');
-                      return;
-                    }
-                    applyExtractionResult(result);
+                    const result = await extractWithClaude(maskedText, '', state.vendors.map(v => v.name));
+                    setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
+                    setExtractedCustomer(result.customerName || '');
+                    setExtractedAmount(result.amount || '');
+                    setExtractedBillNo(result.billNumber || '');
+                    setVendorHint(result.vendorHint || '');
+                    setConfidence(result.confidence || { customerName: 'high', amount: 'high', date: 'high' });
+                    setExtractedVendorId(matchVendor(result.vendorHint || ''));
+                    setStage('review'); // billNumber saved properly via saveBill()
                   } catch (err: any) {
                     toast.error(err.message || 'Failed. Try again.');
                     setStage('upload');
@@ -700,7 +744,7 @@ export function UploadBill() {
             <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
               <motion.button whileTap={{ scale: 0.97 }} onClick={saveBill}
                 style={{
-                  width: '100%', padding: '15px 0', borderRadius: 15, color: '#FFFFFF', border: 'none', cursor: 'pointer',
+                  width: '100%', padding: '15px 0', borderRadius: 15, color: 'var(--bg-card)', border: 'none', cursor: 'pointer',
                   background: 'linear-gradient(135deg, #5C9A6F, #4A8A5D)',
                   fontSize: 16, fontWeight: 600, boxShadow: '0 4px 14px rgba(92,154,111,0.3)',
                 }}>
@@ -716,6 +760,76 @@ export function UploadBill() {
 
       </AnimatePresence>
 
+      {/* ── API KEY SHEET ─────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showApiSheet && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowApiSheet(false)}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+              <motion.div
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                style={{ width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0', background: 'var(--bg-card)', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)', padding: '20px 24px 44px', pointerEvents: 'all' }}>
+
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--border)', margin: '0 auto 20px' }} />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Claude API Key</h3>
+                  <button onClick={() => setShowApiSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <X style={{ width: 19, height: 19, color: 'var(--text-muted)' }} />
+                  </button>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px', lineHeight: 1.5 }}>
+                  Needed for AI bill scanning. Saved only on this device.
+                </p>
+
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 11, padding: '12px 14px', marginBottom: 14 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '0 0 8px' }}>How to get your key:</p>
+                  {['1. Open console.anthropic.com on laptop', '2. Sign up free → API Keys → Create Key', '3. Copy key starting with sk-ant-...', '4. Paste below and tap Save'].map((s, i) => (
+                    <p key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 3px' }}>{s}</p>
+                  ))}
+                  <p style={{ fontSize: 11, color: '#ADA79F', margin: '8px 0 0' }}>~₹0.01 per bill scan · Free $5 credit to start</p>
+                </div>
+
+                <div style={{ position: 'relative', marginBottom: 12 }}>
+                  <input type={showKeyText ? 'text' : 'password'}
+                    value={tempApiKey || state.claudeApiKey}
+                    onChange={e => setTempApiKey(e.target.value)}
+                    placeholder="sk-ant-api03-..."
+                    style={{ width: '100%', padding: '13px 44px 13px 15px', borderRadius: 11, fontSize: 14, background: 'var(--bg-secondary)', border: '1px solid var(--border)', outline: 'none', color: 'var(--text-primary)', boxSizing: 'border-box', fontFamily: 'monospace' }} />
+                  <button onClick={() => setShowKeyText(s => !s)}
+                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                    {showKeyText ? <EyeOff style={{ width: 17, height: 17, color: 'var(--text-muted)' }} /> : <Eye style={{ width: 17, height: 17, color: 'var(--text-muted)' }} />}
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <motion.button whileTap={{ scale: 0.97 }}
+                    onClick={() => {
+                      const key = (tempApiKey || state.claudeApiKey).trim();
+                      if (!key.startsWith('sk-ant')) { toast.error('Invalid key format'); return; }
+                      setClaudeApiKey(key);
+                      setTempApiKey('');
+                      setShowApiSheet(false);
+                      toast.success('API key saved! Ready to scan.');
+                    }}
+                    style={{ flex: 1, padding: '13px 0', borderRadius: 13, color: 'var(--bg-card)', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 15, fontWeight: 600 }}>
+                    Save Key
+                  </motion.button>
+                  {state.claudeApiKey && (
+                    <button onClick={() => { setClaudeApiKey(''); setTempApiKey(''); setShowApiSheet(false); toast.success('Key removed'); }}
+                      style={{ padding: '13px 16px', borderRadius: 13, color: '#C45C4A', background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,8 +1,7 @@
-// BillerPRO Service Worker — v2
-// Only caches navigation (HTML). All JS/CSS assets go straight to network.
-// This prevents the "text/html MIME type" crash on module scripts.
+// BillerPRO Service Worker — v3
+// Handles PWA install caching + WhatsApp/share-target file interception
 
-const CACHE_NAME = 'billerpro-v2';
+const CACHE_NAME = 'billerpro-v3';
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -20,27 +19,74 @@ self.addEventListener('activate', event => {
   );
 });
 
+// ── Share Target handler ───────────────────────────────────────────────────
+// When the user shares a PDF/image from WhatsApp → BillerPRO,
+// Android POSTs the file here. We save it to a temp store and redirect
+// the app to the Upload tab with the file ready to process.
 self.addEventListener('fetch', event => {
-  const { request } = event;
-  const url = new URL(request.url);
+  const url = new URL(event.request.url);
 
-  // Always go to network for: API calls, JS, CSS, images, fonts, non-GET
-  if (
-    request.method !== 'GET' ||
-    url.pathname.startsWith('/api/') ||
-    url.pathname.match(/\.(js|css|png|svg|ico|woff|woff2|ttf|json)$/)
-  ) {
-    event.respondWith(fetch(request));
+  // Intercept the share-target POST
+  if (url.pathname === '/share-target' && event.request.method === 'POST') {
+    event.respondWith((async () => {
+      try {
+        const formData = await event.request.formData();
+        const file = formData.get('file');
+
+        if (file && file instanceof File) {
+          // Store file in a broadcast so the app can pick it up
+          const arrayBuffer = await file.arrayBuffer();
+          const clients = await self.clients.matchAll({ type: 'window' });
+
+          if (clients.length > 0) {
+            // App is open — send file directly
+            clients[0].postMessage({
+              type: 'SHARE_TARGET_FILE',
+              fileName: file.name,
+              fileType: file.type,
+              fileData: arrayBuffer,
+            }, [arrayBuffer]);
+            // Redirect to upload tab
+            clients[0].focus();
+            return Response.redirect('/?tab=upload', 303);
+          } else {
+            // App not open — store in cache temporarily, open app
+            const cache = await caches.open('billerpro-share-tmp');
+            await cache.put('/pending-share', new Response(arrayBuffer, {
+              headers: {
+                'Content-Type': file.type,
+                'X-File-Name': file.name,
+              }
+            }));
+          }
+        }
+      } catch (err) {
+        console.error('Share target error:', err);
+      }
+      // Always redirect to app after handling
+      return Response.redirect('/?tab=upload', 303);
+    })());
     return;
   }
 
-  // Navigation requests (HTML pages) — network first, fall back to cache
-  if (request.mode === 'navigate') {
+  // ── Normal fetch handling ─────────────────────────────────────────────────
+  // Never intercept: API calls, JS/CSS assets (prevents MIME type crash)
+  if (
+    event.request.method !== 'GET' ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname.match(/\.(js|css|png|svg|ico|woff|woff2|ttf|json)$/)
+  ) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // Navigation — network first, fall back to cached index
+  if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
+      fetch(event.request)
         .then(response => {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
           return response;
         })
         .catch(() => caches.match('/'))
@@ -48,6 +94,5 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Everything else — straight to network
-  event.respondWith(fetch(request));
+  event.respondWith(fetch(event.request));
 });

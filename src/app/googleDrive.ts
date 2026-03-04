@@ -18,7 +18,6 @@ const FOLDER_NAME = 'BillerPRO Data';
 const BILLS_SUBFOLDER = 'bills';
 const VENDORS_FILE = 'billerpro_vendors.json';
 const SETTINGS_FILE = 'billerpro_settings.json';
-const DRIVE_EMAIL_HINT_KEY = 'billerpro_drive_email';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 
@@ -41,13 +40,23 @@ let _billsFolderId = null;
 
 export async function initDrive(clientId) {
   if (!clientId) throw new Error('Google Client ID is required');
-  await Promise.all([
-    loadScript('https://apis.google.com/js/api.js'),
-    loadScript('https://accounts.google.com/gsi/client'),
+
+  // 20 second timeout — if Google scripts don't load, show clear error
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Connection timed out. Check your internet and try again.')), 20000)
+  );
+
+  await Promise.race([
+    Promise.all([
+      loadScript('https://apis.google.com/js/api.js'),
+      loadScript('https://accounts.google.com/gsi/client'),
+    ]),
+    timeout,
   ]);
   await new Promise(r => (window).gapi.load('client', r));
   await (window).gapi.client.init({ discoveryDocs: [DISCOVERY] });
-  const storedEmail = localStorage.getItem(DRIVE_EMAIL_HINT_KEY) || '';
+  // hint: pre-select the stored email in the account picker if available
+  const storedEmail = localStorage.getItem('billerpro_drive_email') || '';
   _tokenClient = (window).google.accounts.oauth2.initTokenClient({
     client_id: clientId,
     scope: SCOPE,
@@ -57,9 +66,7 @@ export async function initDrive(clientId) {
   _inited = true;
   _accessToken = await _getToken();
   const userInfo = await _apiFetch('https://www.googleapis.com/oauth2/v2/userinfo');
-  if (userInfo?.email) {
-    localStorage.setItem(DRIVE_EMAIL_HINT_KEY, userInfo.email);
-  }
+  if (userInfo.email) localStorage.setItem('billerpro_drive_email', userInfo.email);
   _rootFolderId = await _getOrCreateFolder(FOLDER_NAME, 'root');
   _billsFolderId = await _getOrCreateFolder(BILLS_SUBFOLDER, _rootFolderId);
   return {
@@ -73,23 +80,36 @@ export async function initDrive(clientId) {
 
 function _getToken() {
   return new Promise((resolve, reject) => {
+    // 90-second timeout — if user dismisses popup without signing in,
+    // stop spinning and show a clear error instead of hanging forever
+    const timeoutId = setTimeout(() => {
+      reject(new Error('Sign-in timed out. Please try again.'));
+    }, 90000);
+
     _tokenClient.callback = (resp) => {
-      if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
+      clearTimeout(timeoutId);
+      if (resp.error) {
+        const msg = resp.error === 'access_denied'
+          ? 'Access denied — make sure your Gmail is added as a test user in Google Cloud Console.'
+          : resp.error === 'popup_closed_by_user'
+          ? 'Sign-in was cancelled. Tap Connect to try again.'
+          : resp.error === 'popup_blocked_by_browser'
+          ? 'Popup was blocked. Allow popups for this site and try again.'
+          : (resp.error_description || resp.error);
+        reject(new Error(msg)); return;
+      }
       _accessToken = resp.access_token;
       (window).gapi.client.setToken({ access_token: resp.access_token });
       resolve(resp.access_token);
     };
     const existing = (window).gapi.client.getToken();
-    const storedEmail = localStorage.getItem(DRIVE_EMAIL_HINT_KEY) || '';
-    _tokenClient.requestAccessToken({
-      prompt: existing ? '' : 'select_account',
-      ...(storedEmail ? { hint: storedEmail } : {}),
-    });
+    _tokenClient.requestAccessToken({ prompt: existing ? '' : 'select_account' });
   });
 }
 
 async function _ensureToken() {
   if (_accessToken) return _accessToken;
+  if (!_inited || !_tokenClient) throw new Error('Drive not connected. Please reconnect Google Drive in Settings.');
   return _getToken();
 }
 
@@ -231,7 +251,11 @@ export async function loadAllFromDrive(clientId, connectionInfo) {
 }
 
 export function signOutDrive() {
-  if (_accessToken) { (window).google?.accounts?.oauth2?.revoke(_accessToken); _accessToken = null; }
+  if (_accessToken) {
+    (window).google?.accounts?.oauth2?.revoke(_accessToken);
+    _accessToken = null;
+    localStorage.removeItem('billerpro_drive_email');
+  }
   if ((window).gapi?.client) (window).gapi.client.setToken('');
   _inited = false; _rootFolderId = null; _billsFolderId = null;
 }
