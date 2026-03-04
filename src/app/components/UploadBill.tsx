@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   CloudUpload, FolderOpen, Camera, CheckCircle2,
-  AlertTriangle, Loader2, Key, X, Eye, EyeOff, ShieldCheck,
+  AlertTriangle, Loader2, ShieldCheck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
@@ -112,7 +112,7 @@ function quickExtractBillNumber(rawText: string): string | null {
     /Voucher\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
     /Tax\s*Invoice\s*No\.?\s*[:#.\-]?\s*(\d{2,})/i,
     // Formats like "No. : 5159" or "No : 5159" standalone
-    /No\.?\s*[:#]\s*(\d{3,})/i,
+    /\bNo\.?\s*[:#]\s*(\d{3,})\b/i,
   ];
   for (const pattern of patterns) {
     const match = rawText.match(pattern);
@@ -133,7 +133,6 @@ function normalizeBillNo(n: string): string {
 // Calls our own Vercel /api/scan proxy — no CORS issue, API key stays on server
 async function extractWithClaude(
   maskedText: string,
-  _apiKey: string,
   vendorNames: string[],
 ): Promise<{
   customerName: string; amount: string; date: string;
@@ -181,7 +180,6 @@ async function extractTextFromImage(file: File): Promise<string> {
 
 async function extractFromImage(
   file: File,
-  _apiKey: string,
   vendorNames: string[],
 ): Promise<{ result: any; maskedFields: string[] }> {
   // Step 1: OCR on device — image never leaves
@@ -191,30 +189,18 @@ async function extractFromImage(
   const { maskedText, maskedFields } = maskSensitiveData(rawText);
 
   // Step 3: Send only masked TEXT to /api/scan proxy (not the image, not to Anthropic directly)
-  const result = await extractWithClaude(maskedText, '', vendorNames);
+  const result = await extractWithClaude(maskedText, vendorNames);
 
   return { result, maskedFields };
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export function UploadBill() {
-  const { state, addBill, getVendor, setActiveTab, setClaudeApiKey } = useApp();
+  const { state, addBill, getVendor, setActiveTab } = useApp();
 
   const [stage, setStage] = useState<Stage>('upload');
-  const [showApiSheet, setShowApiSheet] = useState(false);
-  const [tempApiKey, setTempApiKey] = useState('');
-  const [showKeyText, setShowKeyText] = useState(false);
   const [fileName, setFileName] = useState('');
   const [maskedFields, setMaskedFields] = useState<string[]>([]);
   const [stageLabel, setStageLabel] = useState('');
@@ -285,7 +271,6 @@ export function UploadBill() {
   const selectedVendor = getVendor(extractedVendorId);
   const amount = parseFloat(extractedAmount) || 0;
   const cut = selectedVendor ? amount * selectedVendor.cutPercent / 100 : 0;
-  const hasApiKey = !!state.claudeApiKey;
 
   function matchVendor(hint: string): string {
     if (!hint || state.vendors.length === 0) return '';
@@ -302,12 +287,6 @@ export function UploadBill() {
   // ── Main file handler ──────────────────────────────────────────────────────
   async function handleFile(file: File) {
     if (!file) return;
-
-    if (!state.claudeApiKey) {
-      setShowApiSheet(true);
-      toast.error('Set your API key first');
-      return;
-    }
 
     const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
@@ -358,7 +337,7 @@ export function UploadBill() {
 
         setStage('processing');
         setStageLabel('Sending to Claude AI...');
-        result = await extractWithClaude(maskedText, state.claudeApiKey, state.vendors.map(v => v.name));
+        result = await extractWithClaude(maskedText, state.vendors.map(v => v.name));
 
       } else {
         // ── IMAGE FLOW: send to Claude with strict no-bank-data prompt ────
@@ -366,7 +345,7 @@ export function UploadBill() {
         setStage('extracting');
         setStageLabel('Reading image text on device (OCR)...');
         const { result: imgResult, maskedFields: imgMf } = await extractFromImage(
-          file, state.claudeApiKey, state.vendors.map(v => v.name)
+          file, state.vendors.map(v => v.name)
         );
         result = imgResult;
         setMaskedFields(imgMf.length > 0 ? imgMf : ['No sensitive fields found']);
@@ -607,7 +586,7 @@ export function UploadBill() {
                   setStage('processing');
                   setStageLabel('Sending to Claude AI...');
                   try {
-                    const result = await extractWithClaude(maskedText, '', state.vendors.map(v => v.name));
+                    const result = await extractWithClaude(maskedText, state.vendors.map(v => v.name));
                     setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
                     setExtractedCustomer(result.customerName || '');
                     setExtractedAmount(result.amount || '');
@@ -760,76 +739,6 @@ export function UploadBill() {
 
       </AnimatePresence>
 
-      {/* ── API KEY SHEET ─────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {showApiSheet && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setShowApiSheet(false)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-              <motion.div
-                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                style={{ width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0', background: 'var(--bg-card)', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)', padding: '20px 24px 44px', pointerEvents: 'all' }}>
-
-                <div style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--border)', margin: '0 auto 20px' }} />
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <h3 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Claude API Key</h3>
-                  <button onClick={() => setShowApiSheet(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                    <X style={{ width: 19, height: 19, color: 'var(--text-muted)' }} />
-                  </button>
-                </div>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px', lineHeight: 1.5 }}>
-                  Needed for AI bill scanning. Saved only on this device.
-                </p>
-
-                <div style={{ background: 'var(--bg-secondary)', borderRadius: 11, padding: '12px 14px', marginBottom: 14 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '0 0 8px' }}>How to get your key:</p>
-                  {['1. Open console.anthropic.com on laptop', '2. Sign up free → API Keys → Create Key', '3. Copy key starting with sk-ant-...', '4. Paste below and tap Save'].map((s, i) => (
-                    <p key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 3px' }}>{s}</p>
-                  ))}
-                  <p style={{ fontSize: 11, color: '#ADA79F', margin: '8px 0 0' }}>~₹0.01 per bill scan · Free $5 credit to start</p>
-                </div>
-
-                <div style={{ position: 'relative', marginBottom: 12 }}>
-                  <input type={showKeyText ? 'text' : 'password'}
-                    value={tempApiKey || state.claudeApiKey}
-                    onChange={e => setTempApiKey(e.target.value)}
-                    placeholder="sk-ant-api03-..."
-                    style={{ width: '100%', padding: '13px 44px 13px 15px', borderRadius: 11, fontSize: 14, background: 'var(--bg-secondary)', border: '1px solid var(--border)', outline: 'none', color: 'var(--text-primary)', boxSizing: 'border-box', fontFamily: 'monospace' }} />
-                  <button onClick={() => setShowKeyText(s => !s)}
-                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                    {showKeyText ? <EyeOff style={{ width: 17, height: 17, color: 'var(--text-muted)' }} /> : <Eye style={{ width: 17, height: 17, color: 'var(--text-muted)' }} />}
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <motion.button whileTap={{ scale: 0.97 }}
-                    onClick={() => {
-                      const key = (tempApiKey || state.claudeApiKey).trim();
-                      if (!key.startsWith('sk-ant')) { toast.error('Invalid key format'); return; }
-                      setClaudeApiKey(key);
-                      setTempApiKey('');
-                      setShowApiSheet(false);
-                      toast.success('API key saved! Ready to scan.');
-                    }}
-                    style={{ flex: 1, padding: '13px 0', borderRadius: 13, color: 'var(--bg-card)', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg, #D97757, #C4613C)', fontSize: 15, fontWeight: 600 }}>
-                    Save Key
-                  </motion.button>
-                  {state.claudeApiKey && (
-                    <button onClick={() => { setClaudeApiKey(''); setTempApiKey(''); setShowApiSheet(false); toast.success('Key removed'); }}
-                      style={{ padding: '13px 16px', borderRadius: 13, color: '#C45C4A', background: '#FBF0EE', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </motion.div>
-            </div>
-          </>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

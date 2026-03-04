@@ -54,9 +54,18 @@ export function Analytics() {
   }, [state.bills, state.selectedMonth, filtersActive, rangeFrom, rangeTo, filterVendor]);
 
   const monthlyData = useMemo(() => {
+    const monthCount = {
+      'This Month': 1,
+      '3 Months': 3,
+      '6 Months': 6,
+      'Year': 12,
+    }[period] || 6;
+
     const months: { month: string; totalBills: number; earnings: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(2025, 1 - i, 1);
+    const now = new Date();
+
+    for (let i = monthCount - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const monthBills = state.bills.filter(b => b.date.startsWith(key));
       const totalBills = monthBills.reduce((s, b) => s + b.amount, 0);
@@ -64,10 +73,15 @@ export function Analytics() {
         const v = state.vendors.find(v => v.id === b.vendorId);
         return s + (v ? b.amount * v.cutPercent / 100 : 0);
       }, 0);
-      months.push({ month: d.toLocaleString('en', { month: 'short' }), totalBills: Math.round(totalBills), earnings: Math.round(earnings) });
+      months.push({
+        month: d.toLocaleString('en', { month: 'short' }),
+        totalBills: Math.round(totalBills),
+        earnings: Math.round(earnings),
+      });
     }
+
     return months;
-  }, [state.bills, state.vendors]);
+  }, [state.bills, state.vendors, period]);
 
   const vendorPieData = useMemo(() => {
     const map: Record<string, number> = {};
