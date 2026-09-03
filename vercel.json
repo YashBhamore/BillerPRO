@@ -1,7 +1,7 @@
 {
   "rewrites": [
     {
-      "source": "/((?!assets/|api/).*)",
+      "source": "/((?!assets/|api/|tesseract/|tessdata/).*)",
       "destination": "/index.html"
     }
   ]
