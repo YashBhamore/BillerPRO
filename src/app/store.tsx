@@ -20,16 +20,40 @@ export function localMonthStr(dateStr: string): string {
   return localDateStr(dateStr).slice(0, 7);
 }
 
-// Display formatter. Builds the Date from parts (local midnight) so the date
-// shown on screen always matches the month bucket the bill was filed under.
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Display formatter, deliberately not using toLocaleDateString.
+//
+// Exported sheets travel to other people's phones and PCs, and locale
+// formatting is not stable across them: the same bill renders "01 Sept 2026"
+// under one ICU build and "01 Sep 2026" under another, so the file changed
+// shape depending on the device that produced it. A day-month-year layout with
+// a spelled-out month is also unambiguous everywhere — 05/09/2026 reads as
+// 5 September in India and 9 May in the US, which is exactly the confusion you
+// do not want in a document someone is paying against.
 export function formatBillDate(
   dateStr: string,
-  opts: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric' },
+  opts: { pad?: boolean; year?: boolean } = {},
 ): string {
+  const { pad = true, year = true } = opts;
   const iso = localDateStr(dateStr);
   if (!iso) return '—';
   const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString('en-IN', opts);
+  const day = pad ? String(d).padStart(2, '0') : String(d);
+  const mon = MONTH_ABBR[m - 1] ?? '???';
+  return year ? `${day} ${mon} ${y}` : `${day} ${mon}`;
+}
+
+// Render money as numbers with thousands separators. Kept as real numbers, not
+// text, so totals still add up in Excel, Sheets, Numbers and mobile viewers.
+// "#,##0" is the one grouping format every one of them understands.
+function applyNumberFormats(ws: XLSX.WorkSheet) {
+  Object.keys(ws).forEach(addr => {
+    if (addr.startsWith('!')) return;
+    const cell = ws[addr];
+    if (cell && cell.t === 'n') cell.z = '#,##0';
+  });
+  return ws;
 }
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
@@ -270,6 +294,7 @@ export function exportToXLSX(bills: Bill[], vendors: Vendor[], monthLabel?: stri
     { wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 16 },
     { wch: 16 }, { wch: 7 }, { wch: 18 },
   ];
+  applyNumberFormats(wsSummary);
   XLSX.utils.book_append_sheet(wb, wsSummary, 'All Bills');
 
   // ── One sheet per vendor — perfect for sharing with each vendor ──────────
@@ -323,7 +348,7 @@ function buildVendorSheet(vendor: Vendor, bills: Bill[], monthLabel?: string) {
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 20 }];
-  return ws;
+  return applyNumberFormats(ws);
 }
 
 // ── Per-vendor statement, ready to hand to that vendor ───────────────────────

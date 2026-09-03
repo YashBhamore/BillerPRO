@@ -171,7 +171,7 @@ export function AllBills() {
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[var(--text-primary)]" style={{ fontSize: 16, fontWeight: 600 }}>{vendor?.name}</span>
                         <span className="text-[var(--text-muted)]" style={{ fontSize: 13 }}>
-                          {formatBillDate(b.date, { day: 'numeric', month: 'short' })}
+                          {formatBillDate(b.date, { pad: false, year: false })}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
