@@ -6,6 +6,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
+// Emitted as a separate asset by Vite and served from our own origin.
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 type Stage = 'upload' | 'extracting' | 'processing' | 'review' | 'duplicate';
 type Confidence = 'high' | 'medium' | 'low';
@@ -40,30 +42,38 @@ function toISODate(raw: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 1: LOCAL TEXT EXTRACTION from PDF using PDF.js (no server needed)
 // ─────────────────────────────────────────────────────────────────────────────
+// Bills arrive from WhatsApp, i.e. from outside — so the PDF parser is a real
+// attack surface. pdf.js is bundled from npm rather than pulled from a CDN:
+// the old CDN copy was 3.11.174, vulnerable to CVE-2024-4367, where a crafted
+// FontMatrix runs arbitrary JavaScript in this page (which would expose the
+// user's bills and their Drive token). It also had no subresource integrity,
+// so a compromised CDN could have served anything. Bundling fixes both, and
+// makes PDF reading work offline.
+const MAX_PDF_PAGES = 20;
+
 async function extractTextFromPDF(file: File): Promise<string> {
-  // Load PDF.js from CDN if not already loaded
-  if (!(window as any).pdfjsLib) {
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      script.onload = () => {
-        (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        resolve();
-      };
-      script.onerror = () => reject(new Error('Failed to load PDF reader'));
-      document.head.appendChild(script);
-    });
-  }
+  // Dynamic import so pdf.js is code-split into its own chunk and only
+  // downloaded the first time someone actually opens a PDF.
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await (window as any).pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjsLib.getDocument({
+    data: arrayBuffer,
+    // Defence in depth: the CVE-2024-4367 code path builds a function from
+    // font data. Keep it off even on a patched build.
+    isEvalSupported: false,
+  }).promise;
+
+  // A small compressed PDF can declare thousands of pages; without a cap the
+  // loop freezes the phone. Invoices are a page or two.
+  const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
 
   let fullText = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
+  for (let i = 1; i <= pageCount; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items.map((item: any) => item.str).join(' ');
+    const pageText = content.items.map((item: any) => item.str ?? '').join(' ');
     fullText += pageText + '\n';
   }
   return fullText;
