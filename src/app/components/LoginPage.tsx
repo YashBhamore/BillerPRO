@@ -52,6 +52,37 @@ export function LoginPage() {
     }
   }, [confirmPin]);
 
+  // ── Switch account ────────────────────────────────────────────────────────
+  // This used to clear only the PIN, leaving every bill readable to whoever
+  // tapped it — a one-tap bypass of the lock screen. Starting a new account now
+  // also clears the stored data, so it can't be used to read someone else's
+  // bills. Because that IS destructive and most users have no cloud backup,
+  // it is gated behind an explicit confirmation naming the exact bill count.
+  // ponytail: native confirm() on purpose — a system dialog is harder to tap
+  // through absent-mindedly than a styled button, and it costs no new UI code.
+  const handleSwitchAccount = () => {
+    let billCount = 0;
+    try {
+      billCount = JSON.parse(localStorage.getItem('billerpro_state') || '{}').bills?.length || 0;
+    } catch { /* unreadable state — treat as empty */ }
+
+    const warning = billCount > 0
+      ? `Starting a new account will permanently erase all ${billCount} bill${billCount > 1 ? 's' : ''} saved on this phone.\n\nThis cannot be undone. Continue?`
+      : 'Start a new account on this phone?';
+
+    if (!window.confirm(warning)) return;
+
+    localStorage.removeItem('billerpro_pin');
+    localStorage.removeItem('billerpro_username');
+    localStorage.removeItem('billerpro_state');
+    localStorage.removeItem('billerpro_drive_email');
+    setPin('');
+    setConfirmPin('');
+    setView('welcome');
+    // Full reload so in-memory state can't resurrect the cleared data on save.
+    window.location.reload();
+  };
+
   const activePin = isConfirmStep ? confirmPin : pin;
 
   const handleDigit = (d: string) => {
@@ -318,7 +349,7 @@ export function LoginPage() {
             </div>
 
             <button
-              onClick={() => { localStorage.removeItem('billerpro_pin'); localStorage.removeItem('billerpro_username'); setPin(''); setView('welcome'); }}
+              onClick={handleSwitchAccount}
               style={{ color: '#C4BFB6', fontSize: 13, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'center', paddingTop: 16 }}>
               Not {savedName.split(' ')[0]}? Switch account
             </button>

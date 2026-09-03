@@ -14,6 +14,29 @@ function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
+// Today in LOCAL time. (toISOString() is UTC and can be a day off in India.)
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// The AI is told to return YYYY-MM-DD but occasionally returns DD/MM/YYYY or
+// junk. Anything not coerced here ends up stored unparseable and the bill goes
+// invisible on the dashboard, so normalise before it ever reaches state.
+// Indian invoices are DD/MM/YYYY — note JS would misread that as MM/DD.
+function toISODate(raw: string): string {
+  const s = (raw || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    if (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31) {
+      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    }
+  }
+  return '';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 1: LOCAL TEXT EXTRACTION from PDF using PDF.js (no server needed)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -349,7 +372,7 @@ export function UploadBill() {
       }
 
       // Set extracted values
-      setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
+      setExtractedDate(toISODate(result.date) || todayISO());
       setExtractedCustomer(result.customerName || '');
       setExtractedAmount(result.amount || '');
       setExtractedBillNo(result.billNumber || quickBillNoFromPdf || '');
@@ -370,7 +393,12 @@ export function UploadBill() {
     if (!extractedVendorId) { toast.error('Please select a vendor'); return; }
     if (!extractedCustomer.trim()) { toast.error('Customer name is required'); return; }
     if (amount <= 0) { toast.error('Bill amount must be greater than 0'); return; }
-    if (!extractedDate) { toast.error('Please enter the bill date'); return; }
+    // Must be a real YYYY-MM-DD — a malformed date stores fine but then the
+    // bill never matches any month filter and looks lost.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(extractedDate)) {
+      toast.error('Please pick a valid bill date');
+      return;
+    }
 
     const normalizedBill = extractedBillNo ? normalizeBillNo(extractedBillNo) : '';
     if (normalizedBill) {
@@ -598,7 +626,7 @@ export function UploadBill() {
                   setStageLabel('Sending to Claude AI...');
                   try {
                     const result = await extractWithClaude(maskedText, state.vendors.map(v => v.name));
-                    setExtractedDate(result.date || new Date().toISOString().split('T')[0]);
+                    setExtractedDate(toISODate(result.date) || todayISO());
                     setExtractedCustomer(result.customerName || '');
                     setExtractedAmount(result.amount || '');
                     setExtractedBillNo(result.billNumber || '');

@@ -1,7 +1,7 @@
-// BillerPRO Service Worker — v3
+// BillerPRO Service Worker — v4
 // Handles PWA install caching + WhatsApp/share-target file interception
 
-const CACHE_NAME = 'billerpro-v3';
+const CACHE_NAME = 'billerpro-v4';
 
 self.addEventListener('install', event => {
   event.waitUntil(

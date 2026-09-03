@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
-import { exportToXLSX, exportMonthToXLSX } from '../store';
+import { exportToXLSX, exportMonthToXLSX, localMonthStr, exportBackupJSON, parseBackupJSON } from '../store';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
@@ -29,7 +29,10 @@ export function SettingsScreen() {
     state, setUserProfile, setMonthlyTarget,
     addVendor, updateVendor, deleteVendor, logout, setTheme,
     connectDrive, disconnectDrive, loadFromDrive, setDriveClientId,
+    restoreBackup,
   } = useApp();
+
+  const restoreInputRef = React.useRef<HTMLInputElement>(null);
 
   // ── Vendor sheet (add/edit) ──────────────────────────────────────────────
   const [showVendorSheet, setShowVendorSheet] = useState(false);
@@ -331,9 +334,33 @@ export function SettingsScreen() {
       {/* ── EXPORT ────────────────────────────────────────────────────────── */}
       <div style={{ borderRadius: 18, padding: '18px 16px', marginBottom: 16, background: 'var(--bg-card)', boxShadow: '0 1px 3px rgba(26,24,22,0.08)' }}>
         <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', margin: '0 0 12px' }}>EXPORT DATA</p>
+
+        {/* Hidden picker for "Restore from backup" */}
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: 'none' }}
+          onChange={async e => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            try {
+              const data = parseBackupJSON(await file.text());
+              const { added, skipped } = restoreBackup(data);
+              toast.success(
+                added > 0
+                  ? `Restored ${added} bill${added > 1 ? 's' : ''}${skipped ? ` · ${skipped} already here` : ''}`
+                  : 'Everything in that backup was already saved',
+              );
+            } catch (err: any) {
+              toast.error(err?.message || 'Could not read that backup file');
+            }
+          }}
+        />
         {[
           { label: 'Export this month', sub: 'Excel file — share with vendors', action: () => {
-            const mb = state.bills.filter(b => { const d = new Date(b.date); const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; return m === state.selectedMonth; });
+            const mb = state.bills.filter(b => localMonthStr(b.date) === state.selectedMonth);
             if (!mb.length) { toast.error('No bills this month'); return; }
             exportMonthToXLSX(state.bills, state.vendors, state.selectedMonth);
             toast.success(`Exporting ${mb.length} bills to Excel…`);
@@ -343,9 +370,17 @@ export function SettingsScreen() {
             exportToXLSX(state.bills, state.vendors);
             toast.success(`Exporting ${state.bills.length} bills to Excel…`);
           }},
-        ].map((item, i) => (
+          { label: 'Download backup file', sub: 'Save this to restore your data later', action: () => {
+            if (!state.bills.length && !state.vendors.length) { toast.error('Nothing to back up yet'); return; }
+            const n = exportBackupJSON(state);
+            toast.success(`Backup saved — ${n} bills. Keep this file safe.`);
+          }},
+          { label: 'Restore from backup', sub: 'Add bills back from a backup file', action: () => {
+            restoreInputRef.current?.click();
+          }},
+        ].map((item, i, arr) => (
           <button key={item.label} onClick={item.action}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px', borderBottom: i === 0 ? '1px solid var(--border)' : 'none', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none', background: 'transparent', border: 'none', cursor: 'pointer' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Download style={{ width: 17, height: 17, color: '#5C9A6F' }} />
               <div style={{ textAlign: 'left' }}>

@@ -1,9 +1,35 @@
 import * as XLSX from 'xlsx';
 
-// Timezone-safe month comparison — matches how dates display on screen
-function localMonthStr(dateStr: string) {
+// ── Date keys — single source of truth for every month/day bucket ────────────
+// Bills are stored as "YYYY-MM-DD". Do NOT round-trip that through `new Date()`:
+// JS parses a date-only ISO string as UTC midnight, then getMonth()/getDate()
+// read it back in local time — so in any timezone behind UTC (the Americas),
+// "2026-06-01" reads as 31 May and the bill vanishes from June.
+// The string already IS the local date, so slice it.
+export function localDateStr(dateStr: string): string {
+  if (typeof dateStr !== 'string') return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.slice(0, 10);
+  // Non-ISO fallback (older records, odd AI output). Invalid → '' so it never
+  // matches a real month instead of producing a "NaN-NaN" bucket.
   const d = new Date(dateStr);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  if (isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+export function localMonthStr(dateStr: string): string {
+  return localDateStr(dateStr).slice(0, 7);
+}
+
+// Display formatter. Builds the Date from parts (local midnight) so the date
+// shown on screen always matches the month bucket the bill was filed under.
+export function formatBillDate(
+  dateStr: string,
+  opts: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric' },
+): string {
+  const iso = localDateStr(dateStr);
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-IN', opts);
 }
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
@@ -109,6 +135,9 @@ function loadState(): AppState {
       ...saved,
       isLoggedIn: false,
       activeTab: 'home',
+      // Always open on the current month. Persisting this meant a user who last
+      // viewed March still saw March months later — new bills looked "missing".
+      selectedMonth: currentMonth(),
       // Reset transient drive UI states
       driveStatus: {
         ...defaultState.driveStatus,
@@ -140,6 +169,63 @@ function pickPersistable(state: AppState) {
   };
 }
 
+// ── Full backup (JSON) ───────────────────────────────────────────────────────
+// The safety net for the majority of users who never connect Google Drive.
+// One file, restorable on any device, no account required.
+
+export const BACKUP_MARKER = 'BillerPRO';
+
+export function exportBackupJSON(state: AppState) {
+  const payload = {
+    _app: BACKUP_MARKER,
+    _version: STORAGE_VERSION,
+    _exportedAt: new Date().toISOString(),
+    user: state.user,
+    vendors: state.vendors,
+    bills: state.bills,
+    monthlyTarget: state.monthlyTarget,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `BillerPRO-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return state.bills.length;
+}
+
+export interface BackupData {
+  user?: Partial<UserProfile>;
+  vendors: Vendor[];
+  bills: Bill[];
+  monthlyTarget?: number;
+}
+
+// Throws on anything that isn't a recognisable BillerPRO backup, so a
+// mis-picked file can never wipe real data.
+export function parseBackupJSON(text: string): BackupData {
+  let raw: any;
+  try { raw = JSON.parse(text); }
+  catch { throw new Error('That file is not readable JSON.'); }
+
+  if (!raw || typeof raw !== 'object') throw new Error('That file is not a BillerPRO backup.');
+  if (raw._app && raw._app !== BACKUP_MARKER) throw new Error('That backup is from a different app.');
+  if (!Array.isArray(raw.bills) || !Array.isArray(raw.vendors)) {
+    throw new Error('That file is not a BillerPRO backup.');
+  }
+  const bills = raw.bills.filter(
+    (b: any) => b && typeof b.id === 'string' && typeof b.amount === 'number' && typeof b.date === 'string',
+  );
+  const vendors = raw.vendors.filter(
+    (v: any) => v && typeof v.id === 'string' && typeof v.name === 'string',
+  );
+  if (bills.length === 0 && vendors.length === 0) throw new Error('That backup is empty.');
+  return { user: raw.user, vendors, bills, monthlyTarget: raw.monthlyTarget };
+}
+
 // ── Excel (XLSX) export ───────────────────────────────────────────────────────
 // Exports a proper .xlsx file with one sheet per vendor — perfect for sharing
 // with each vendor as monthly proof of sales + commission owed.
@@ -161,7 +247,7 @@ export function exportToXLSX(bills: Bill[], vendors: Vendor[], monthLabel?: stri
     const v = getV(b.vendorId);
     const cut = v ? Math.round(b.amount * v.cutPercent / 100) : 0;
     summaryRows.push([
-      new Date(b.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      formatBillDate(b.date),
       b.billNumber || '—',
       b.customerName,
       v?.name || 'Unknown',
@@ -203,7 +289,7 @@ export function exportToXLSX(bills: Bill[], vendors: Vendor[], monthLabel?: stri
     vBills.forEach(b => {
       const cut = Math.round(b.amount * vendor.cutPercent / 100);
       rows.push([
-        new Date(b.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        formatBillDate(b.date),
         b.billNumber || '—',
         b.customerName,
         b.amount,
@@ -278,6 +364,7 @@ interface AppContextType {
   getEarningsForMonth: (month: string) => number;
   getTotalBillsForMonth: (month: string) => number;
   setDriveClientId: (id: string) => void;
+  restoreBackup: (data: BackupData) => { added: number; skipped: number };
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -463,6 +550,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
+  // ── Restore from a backup file ────────────────────────────────────────────
+  // MERGES rather than replaces: restoring an older backup must never delete
+  // bills recorded since. Existing ids always win.
+  const restoreBackup = useCallback((data: BackupData) => {
+    let added = 0, skipped = 0;
+    setState(s => {
+      const billIds = new Set(s.bills.map(b => b.id));
+      const newBills = data.bills.filter(b => {
+        if (billIds.has(b.id)) { skipped++; return false; }
+        added++; return true;
+      });
+      const vendorIds = new Set(s.vendors.map(v => v.id));
+      const newVendors = data.vendors.filter(v => !vendorIds.has(v.id));
+
+      return {
+        ...s,
+        bills: [...newBills, ...s.bills].sort((a, b) => b.date.localeCompare(a.date)),
+        vendors: [...s.vendors, ...newVendors],
+        monthlyTarget: s.monthlyTarget || data.monthlyTarget || 0,
+        user: { ...s.user, ...(data.user || {}) },
+      };
+    });
+    return { added, skipped };
+  }, []);
+
   const getVendor = useCallback((id: string) => state.vendors.find(v => v.id === id), [state.vendors]);
   const getBillsForMonth = useCallback((month: string) => getBillsForMonthFn(state.bills, month), [state.bills]);
   const getEarningsForMonth = useCallback((month: string) => getEarningsForMonthFn(state.bills, state.vendors, month), [state.bills, state.vendors]);
@@ -477,6 +589,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setUserProfile, setTheme, setClaudeApiKey,
       connectDrive, disconnectDrive, loadFromDrive,
       getVendor, getBillsForMonth, getEarningsForMonth, getTotalBillsForMonth, setDriveClientId,
+      restoreBackup,
     }}>
       {children}
     </AppContext.Provider>

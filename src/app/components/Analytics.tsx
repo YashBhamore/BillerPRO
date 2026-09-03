@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useApp } from '../store';
+import { useApp, localDateStr, localMonthStr } from '../store';
 import { motion, AnimatePresence } from 'motion/react';
 import { TrendingUp, Trophy, Calendar, Receipt, Filter, X } from 'lucide-react';
 import {
@@ -11,16 +11,8 @@ function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
 }
 
-// Convert any stored date string to local YYYY-MM-DD / YYYY-MM
-// Fixes timezone bug: "2026-02-26" UTC = "25 Feb" IST in display
-function localDateStr(dateStr: string) {
-  const d = new Date(dateStr);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function localMonthStr(dateStr: string) {
-  const d = new Date(dateStr);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-}
+// localDateStr / localMonthStr now come from store.tsx — one shared
+// implementation so Analytics, AllBills and the dashboard always agree.
 
 const periods = ['This Month', '3 Months', '6 Months', 'Year'];
 
@@ -126,16 +118,18 @@ export function Analytics() {
   const dailyTrend = useMemo(() => {
     const days: Record<number, number> = {};
     filteredBills.forEach(b => {
-      const day = parseInt(b.date.split('-')[2]);
+      const day = parseInt(localDateStr(b.date).slice(8, 10), 10);
+      if (!day) return;   // unparseable date — skip rather than bucket under NaN
       days[day] = (days[day] || 0) + b.amount;
     });
-    return Array.from({ length: 28 }, (_, i) => ({ day: i + 1, amount: days[i + 1] || 0 }));
+    // 31, not 28 — bills dated 29–31 were silently missing from this chart
+    return Array.from({ length: 31 }, (_, i) => ({ day: i + 1, amount: days[i + 1] || 0 }));
   }, [filteredBills]);
 
   const stats = useMemo(() => {
     const monthEarnings: Record<string, number> = {};
     state.bills.forEach(b => {
-      const key = b.date.substring(0, 7);
+      const key = localMonthStr(b.date);
       const v = getVendor(b.vendorId);
       if (!v) return;
       monthEarnings[key] = (monthEarnings[key] || 0) + b.amount * v.cutPercent / 100;

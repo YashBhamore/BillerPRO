@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, X, Trash2, Pencil, Receipt } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useApp } from '../store';
+import { useApp, localMonthStr, formatBillDate } from '../store';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
@@ -48,9 +48,8 @@ export function AllBills() {
   const grouped = useMemo(() => {
     const map: Record<string, typeof filteredBills> = {};
     filteredBills.forEach(b => {
-      // Use local date for grouping so month buckets match displayed date
-      const d = new Date(b.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      // Shared helper so grouping matches the dashboard's month filter exactly
+      const key = localMonthStr(b.date);
       if (!map[key]) map[key] = [];
       map[key].push(b);
     });
@@ -172,7 +171,7 @@ export function AllBills() {
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[var(--text-primary)]" style={{ fontSize: 16, fontWeight: 600 }}>{vendor?.name}</span>
                         <span className="text-[var(--text-muted)]" style={{ fontSize: 13 }}>
-                          {new Date(b.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                          {formatBillDate(b.date, { day: 'numeric', month: 'short' })}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
