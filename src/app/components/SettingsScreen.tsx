@@ -7,7 +7,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
-import { exportToXLSX, exportMonthToXLSX, localMonthStr, exportBackupJSON, parseBackupJSON } from '../store';
+import {
+  exportToXLSX, exportMonthToXLSX, localMonthStr, exportBackupJSON, parseBackupJSON,
+  buildVendorStatement, shareOrDownload, monthLabelFor,
+} from '../store';
 
 function formatCurrency(val: number) {
   return '₹' + val.toLocaleString('en-IN');
@@ -33,6 +36,42 @@ export function SettingsScreen() {
   } = useApp();
 
   const restoreInputRef = React.useRef<HTMLInputElement>(null);
+  const [showVendorExport, setShowVendorExport] = useState(false);
+
+  // What each vendor is owed for the month currently in view — so the payout
+  // figure is visible before anything is generated.
+  const monthLabel = monthLabelFor(state.selectedMonth);
+  const vendorPayouts = React.useMemo(() => {
+    const monthBills = state.bills.filter(b => localMonthStr(b.date) === state.selectedMonth);
+    return state.vendors.map(v => {
+      const vb = monthBills.filter(b => b.vendorId === v.id);
+      return {
+        vendor: v,
+        count: vb.length,
+        total: vb.reduce((s, b) => s + b.amount, 0),
+        cut: vb.reduce((s, b) => s + Math.round(b.amount * v.cutPercent / 100), 0),
+      };
+    });
+  }, [state.bills, state.vendors, state.selectedMonth]);
+
+  // Kept synchronous up to the share() call: Android drops the user gesture if
+  // anything is awaited first, and then the share sheet silently never opens.
+  function sendVendorStatement(vendorId: string) {
+    const stmt = buildVendorStatement(state.bills, state.vendors, vendorId, state.selectedMonth);
+    if (!stmt) { toast.error('No bills for that vendor this month'); return; }
+    setShowVendorExport(false);
+    shareOrDownload(
+      stmt.file,
+      `${stmt.vendorName} — ${monthLabel}: ${stmt.billCount} bills, commission ₹${stmt.cutTotal.toLocaleString('en-IN')}`,
+    ).then(result => {
+      if (result === 'cancelled') return;
+      toast.success(
+        result === 'shared'
+          ? `Sent ${stmt.vendorName}'s statement`
+          : `Downloaded ${stmt.fileName}`,
+      );
+    }).catch(() => toast.error('Could not export that statement'));
+  }
 
   // ── Vendor sheet (add/edit) ──────────────────────────────────────────────
   const [showVendorSheet, setShowVendorSheet] = useState(false);
@@ -370,6 +409,10 @@ export function SettingsScreen() {
             exportToXLSX(state.bills, state.vendors);
             toast.success(`Exporting ${state.bills.length} bills to Excel…`);
           }},
+          { label: 'Send a vendor their statement', sub: `Pick one vendor — ${monthLabel}`, action: () => {
+            if (!state.vendors.length) { toast.error('Add a vendor first'); return; }
+            setShowVendorExport(true);
+          }},
           { label: 'Download backup file', sub: 'Save this to restore your data later', action: () => {
             if (!state.bills.length && !state.vendors.length) { toast.error('Nothing to back up yet'); return; }
             const n = exportBackupJSON(state);
@@ -464,6 +507,86 @@ export function SettingsScreen() {
                     Cancel, Keep {selectedIds.size > 1 ? 'Them' : 'It'}
                   </button>
                 </div>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── SEND VENDOR STATEMENT SHEET ───────────────────────────────────── */}
+      <AnimatePresence>
+        {showVendorExport && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowVendorExport(false)}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(26,24,22,0.4)', backdropFilter: 'blur(2px)', zIndex: 100 }} />
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 101, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                style={{
+                  width: '100%', maxWidth: 430, borderRadius: '22px 22px 0 0',
+                  background: 'var(--bg-card)', boxShadow: '0 -8px 30px rgba(26,24,22,0.12)',
+                  padding: '20px 24px 48px',
+                  paddingBottom: 'max(88px, calc(80px + env(safe-area-inset-bottom)))',
+                  pointerEvents: 'all', overflowY: 'auto', maxHeight: '85vh',
+                }}>
+                <div style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--border)', margin: '0 auto 18px' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <h3 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Vendor Statement</h3>
+                  <button onClick={() => setShowVendorExport(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+                    <X style={{ width: 19, height: 19, color: 'var(--text-muted)' }} />
+                  </button>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px' }}>
+                  {monthLabel} · tap a vendor to send them their sheet
+                </p>
+
+                {vendorPayouts.every(v => v.count === 0) ? (
+                  <p style={{ fontSize: 14, color: '#C45C4A', textAlign: 'center', padding: '20px 0', margin: 0 }}>
+                    No bills in {monthLabel}. Change the month on the Home screen first.
+                  </p>
+                ) : vendorPayouts.map(({ vendor, count, total, cut }) => (
+                  <button
+                    key={vendor.id}
+                    disabled={count === 0}
+                    onClick={() => sendVendorStatement(vendor.id)}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '12px 12px', marginBottom: 8, borderRadius: 13,
+                      background: count === 0 ? 'transparent' : 'var(--bg-secondary)',
+                      border: '1px solid ' + (count === 0 ? 'var(--border)' : 'transparent'),
+                      cursor: count === 0 ? 'not-allowed' : 'pointer',
+                      opacity: count === 0 ? 0.5 : 1, textAlign: 'left',
+                    }}>
+                    <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: vendor.color + '22', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: vendor.color }}>{vendor.name.charAt(0).toUpperCase()}</span>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 2px' }}>{vendor.name}</p>
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+                        {count === 0 ? 'No bills this month' : `${count} bill${count > 1 ? 's' : ''} · ${formatCurrency(total)}`}
+                      </p>
+                    </div>
+                    {count > 0 && (
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <p style={{ fontSize: 15, fontWeight: 700, color: '#5C9A6F', margin: 0 }}>{formatCurrency(cut)}</p>
+                        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{vendor.cutPercent}% cut</p>
+                      </div>
+                    )}
+                  </button>
+                ))}
+
+                <button
+                  onClick={() => {
+                    const mb = state.bills.filter(b => localMonthStr(b.date) === state.selectedMonth);
+                    if (!mb.length) { toast.error(`No bills in ${monthLabel}`); return; }
+                    exportMonthToXLSX(state.bills, state.vendors, state.selectedMonth);
+                    setShowVendorExport(false);
+                    toast.success(`Exporting all ${mb.length} bills for ${monthLabel}`);
+                  }}
+                  style={{ width: '100%', marginTop: 6, padding: '13px 0', borderRadius: 13, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+                  Or export all vendors together
+                </button>
               </motion.div>
             </div>
           </>

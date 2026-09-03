@@ -274,43 +274,137 @@ export function exportToXLSX(bills: Bill[], vendors: Vendor[], monthLabel?: stri
 
   // ── One sheet per vendor — perfect for sharing with each vendor ──────────
   vendors.forEach(vendor => {
-    const vBills = bills.filter(b => b.vendorId === vendor.id)
-                        .sort((a, b) => a.date.localeCompare(b.date));
-    if (vBills.length === 0) return;
-
-    const rows: any[][] = [
-      [`${vendor.name} — ${monthLabel || 'Bill Statement'}`],
-      [`Commission Rate: ${vendor.cutPercent}%`],
-      [`Generated: ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`],
-      [],
-      ['Date', 'Bill No.', 'Customer Name', 'Bill Amount (₹)', `Commission ${vendor.cutPercent}% (₹)`],
-    ];
-
-    vBills.forEach(b => {
-      const cut = Math.round(b.amount * vendor.cutPercent / 100);
-      rows.push([
-        formatBillDate(b.date),
-        b.billNumber || '—',
-        b.customerName,
-        b.amount,
-        cut,
-      ]);
-    });
-
-    const vTotal = vBills.reduce((s, b) => s + b.amount, 0);
-    const vEarn  = vBills.reduce((s, b) => s + Math.round(b.amount * vendor.cutPercent / 100), 0);
-    rows.push([]);
-    rows.push(['', '', 'TOTAL', vTotal, vEarn]);
-    rows.push([]);
-    rows.push(['', '', `Amount to collect from ${vendor.name}:`, '', vEarn]);
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(wb, ws, vendor.name.slice(0, 31));
+    const sheet = buildVendorSheet(vendor, bills, monthLabel);
+    if (sheet) XLSX.utils.book_append_sheet(wb, sheet, safeSheetName(vendor.name));
   });
 
   const label = monthLabel ? monthLabel.replace(/[^a-zA-Z0-9]/g, '_') : 'All';
   XLSX.writeFile(wb, `BillerPRO_${label}.xlsx`);
+}
+
+// Excel rejects : \ / ? * [ ] in sheet names and caps them at 31 characters.
+// A vendor called "F&F / Decor" would otherwise produce a corrupt workbook.
+function safeSheetName(name: string): string {
+  const cleaned = name.replace(/[:\\/?*[\]]/g, '-').trim().slice(0, 31);
+  return cleaned || 'Vendor';
+}
+
+// One vendor's statement: their bills, their commission, what they owe.
+// Returns null when the vendor has nothing in this period.
+function buildVendorSheet(vendor: Vendor, bills: Bill[], monthLabel?: string) {
+  const vBills = bills.filter(b => b.vendorId === vendor.id)
+                      .sort((a, b) => a.date.localeCompare(b.date));
+  if (vBills.length === 0) return null;
+
+  const rows: any[][] = [
+    [`${vendor.name} — ${monthLabel || 'Bill Statement'}`],
+    [`Commission Rate: ${vendor.cutPercent}%`],
+    [`Generated: ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`],
+    [],
+    ['Date', 'Bill No.', 'Customer Name', 'Bill Amount (₹)', `Commission ${vendor.cutPercent}% (₹)`],
+  ];
+
+  vBills.forEach(b => {
+    rows.push([
+      formatBillDate(b.date),
+      b.billNumber || '—',
+      b.customerName,
+      b.amount,
+      Math.round(b.amount * vendor.cutPercent / 100),
+    ]);
+  });
+
+  const vTotal = vBills.reduce((s, b) => s + b.amount, 0);
+  const vEarn  = vBills.reduce((s, b) => s + Math.round(b.amount * vendor.cutPercent / 100), 0);
+  rows.push([]);
+  rows.push(['', '', 'TOTAL', vTotal, vEarn]);
+  rows.push([]);
+  rows.push(['', '', `Amount to collect from ${vendor.name}:`, '', vEarn]);
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 20 }];
+  return ws;
+}
+
+// ── Per-vendor statement, ready to hand to that vendor ───────────────────────
+
+export interface VendorStatement {
+  file: File;
+  fileName: string;
+  vendorName: string;
+  billCount: number;
+  billTotal: number;
+  cutTotal: number;
+}
+
+export function monthLabelFor(month: string): string {
+  const [yr, mo] = month.split('-');
+  return new Date(Number(yr), Number(mo) - 1, 1)
+    .toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+// Builds the sheet for ONE vendor for ONE month, as a File so it can be shared
+// straight into WhatsApp rather than downloaded and hunted for afterwards.
+// Synchronous on purpose: navigator.share must be reached from the click that
+// started it, and an await in between loses that gesture on Android.
+export function buildVendorStatement(
+  bills: Bill[], vendors: Vendor[], vendorId: string, month: string,
+): VendorStatement | null {
+  const vendor = vendors.find(v => v.id === vendorId);
+  if (!vendor) return null;
+
+  const label = monthLabelFor(month);
+  const monthBills = bills.filter(b => localMonthStr(b.date) === month);
+  const ws = buildVendorSheet(vendor, monthBills, label);
+  if (!ws) return null;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, safeSheetName(vendor.name));
+
+  const vBills = monthBills.filter(b => b.vendorId === vendor.id);
+  const fileName =
+    `${vendor.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${label.replace(/[^a-zA-Z0-9]+/g, '_')}.xlsx`;
+
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const file = new File([buf], fileName, {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+
+  return {
+    file, fileName,
+    vendorName: vendor.name,
+    billCount: vBills.length,
+    billTotal: vBills.reduce((s, b) => s + b.amount, 0),
+    cutTotal: vBills.reduce((s, b) => s + Math.round(b.amount * vendor.cutPercent / 100), 0),
+  };
+}
+
+// Hand the file to the OS share sheet (WhatsApp, Gmail, Drive…) when the device
+// supports sharing files, otherwise fall back to a normal download.
+export async function shareOrDownload(
+  file: File, text?: string,
+): Promise<'shared' | 'downloaded' | 'cancelled'> {
+  const nav = navigator as any;
+  if (nav.canShare?.({ files: [file] })) {
+    try {
+      await nav.share({ files: [file], title: file.name, text });
+      return 'shared';
+    } catch (err: any) {
+      // User backed out of the share sheet — not an error, and not a reason
+      // to dump a file into Downloads they did not ask for.
+      if (err?.name === 'AbortError') return 'cancelled';
+      // Anything else: fall through to downloading.
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return 'downloaded';
 }
 
 export function exportMonthToXLSX(bills: Bill[], vendors: Vendor[], month: string) {
