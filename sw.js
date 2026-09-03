@@ -1,3 +1,10 @@
+// ⚠️ NOT THE SHIPPED SERVICE WORKER — this file is not part of the build.
+// Vite copies public/ into dist/; a sw.js at the project root is ignored, so
+// index.html's /sw.js is always public/sw.js. Edit that one. This copy is kept
+// only because it holds the WhatsApp share-target handler, which has therefore
+// never actually run in production — see public/manifest.json, which likewise
+// has no share_target entry.
+//
 // BillerPRO Service Worker — v4
 // Handles PWA install caching + WhatsApp/share-target file interception
 

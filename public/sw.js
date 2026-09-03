@@ -1,8 +1,12 @@
-// BillerPRO Service Worker — v2
+// BillerPRO Service Worker — v4
 // Only caches navigation (HTML). All JS/CSS assets go straight to network.
 // This prevents the "text/html MIME type" crash on module scripts.
+//
+// NOTE: this file — public/sw.js — is the one that actually ships. Vite copies
+// public/ into dist/ verbatim; a sw.js at the project root is NOT part of the
+// build. Bump CACHE_NAME *here* to push an update to installed PWAs.
 
-const CACHE_NAME = 'billerpro-v2';
+const CACHE_NAME = 'billerpro-v4';
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -28,7 +32,7 @@ self.addEventListener('fetch', event => {
   if (
     request.method !== 'GET' ||
     url.pathname.startsWith('/api/') ||
-    url.pathname.match(/\.(js|css|png|svg|ico|woff|woff2|ttf|json)$/)
+    url.pathname.match(/\.(m?js|css|png|svg|ico|woff|woff2|ttf|json)$/)
   ) {
     event.respondWith(fetch(request));
     return;

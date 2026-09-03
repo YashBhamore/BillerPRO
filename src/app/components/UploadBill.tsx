@@ -6,8 +6,11 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../store';
 import { toast } from 'sonner';
-// Emitted as a separate asset by Vite and served from our own origin.
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// Vite bundles the worker and hands back a Worker constructor. Using ?worker
+// rather than ?url means we never hand pdf.js a URL to re-fetch: a URL that
+// 404s gets the SPA fallback's HTML instead, and the module import then dies
+// with "Failed to fetch dynamically imported module".
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
 
 type Stage = 'upload' | 'extracting' | 'processing' | 'review' | 'duplicate';
 type Confidence = 'high' | 'medium' | 'low';
@@ -55,28 +58,39 @@ async function extractTextFromPDF(file: File): Promise<string> {
   // Dynamic import so pdf.js is code-split into its own chunk and only
   // downloaded the first time someone actually opens a PDF.
   const pdfjsLib = await import('pdfjs-dist');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+  // workerPort takes a live Worker, so there is no URL to resolve at runtime.
+  // One worker per call, terminated in `finally` — pdf.js does not own it, so
+  // without that every upload would leak a worker.
+  const worker = new PdfWorker();
+  pdfjsLib.GlobalWorkerOptions.workerPort = worker;
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({
-    data: arrayBuffer,
-    // Defence in depth: the CVE-2024-4367 code path builds a function from
-    // font data. Keep it off even on a patched build.
-    isEvalSupported: false,
-  }).promise;
+  let pdf: any;
+  try {
+    pdf = await pdfjsLib.getDocument({
+      data: arrayBuffer,
+      // Defence in depth: the CVE-2024-4367 code path builds a function from
+      // font data. Keep it off even on a patched build.
+      isEvalSupported: false,
+    }).promise;
 
-  // A small compressed PDF can declare thousands of pages; without a cap the
-  // loop freezes the phone. Invoices are a page or two.
-  const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
+    // A small compressed PDF can declare thousands of pages; without a cap the
+    // loop freezes the phone. Invoices are a page or two.
+    const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
 
-  let fullText = '';
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items.map((item: any) => item.str ?? '').join(' ');
-    fullText += pageText + '\n';
+    let fullText = '';
+    for (let i = 1; i <= pageCount; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((item: any) => item.str ?? '').join(' ');
+      fullText += pageText + '\n';
+    }
+    return fullText;
+  } finally {
+    try { await pdf?.destroy(); } catch { /* already gone */ }
+    worker.terminate();
   }
-  return fullText;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
