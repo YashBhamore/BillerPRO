@@ -65,8 +65,10 @@ self.addEventListener('fetch', event => {
       } catch (err) {
         console.error('Share target error:', err);
       }
-      // 303 so the browser follows with a GET.
-      return Response.redirect('/?tab=upload', 303);
+      // 303 so the browser follows with a GET. Absolute URL on purpose:
+      // Response.redirect resolves a relative URL against the caller's base,
+      // which is the worker script's location rather than the page's.
+      return Response.redirect(new URL('/?tab=upload', self.location.origin).href, 303);
     })());
     return;
   }
