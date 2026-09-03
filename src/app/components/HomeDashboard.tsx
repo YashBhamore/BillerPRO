@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Pencil, X, Users, IndianRupee, Percent, TrendingUp, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useApp } from '../store';
+import { useApp, localMonthStr } from '../store';
 import { CircularProgress } from './CircularProgress';
 import { toast } from 'sonner';
 
@@ -78,6 +78,19 @@ export function HomeDashboard() {
     return map;
   }, [monthBills, getVendor]);
 
+  // A zero dashboard is ambiguous: it can mean "nothing this month" or "your
+  // bills are filed under a different month and you are looking at the wrong
+  // one". Say which, and offer one tap to get there.
+  const elsewhere = useMemo(() => {
+    if (monthBills.length > 0 || state.bills.length === 0) return null;
+    const latest = state.bills.reduce((a, b) =>
+      (localMonthStr(b.date) > localMonthStr(a.date) ? b : a));
+    const m = localMonthStr(latest.date);
+    if (!m) return null;
+    const [y, mo] = m.split('-').map(Number);
+    return { count: state.bills.length, month: m, label: `${MONTHS[mo - 1]} ${y}` };
+  }, [monthBills, state.bills]);
+
   const prevMonth = () => {
     const d = new Date(year, month - 2, 1);
     setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
@@ -111,6 +124,27 @@ export function HomeDashboard() {
           </button>
         </div>
       </div>
+
+      {/* No bills in this month, but there are bills elsewhere */}
+      {elsewhere && (
+        <button
+          onClick={() => setSelectedMonth(elsewhere.month)}
+          className="w-full rounded-xl px-4 py-3 mb-4 flex items-center justify-between text-left"
+          style={{ background: '#FDF5F0', border: '1px solid rgba(217,119,87,0.25)' }}
+        >
+          <div>
+            <p className="text-[#D97757]" style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+              No bills in {MONTHS[month - 1]} {year}
+            </p>
+            <p className="text-[var(--text-muted)]" style={{ fontSize: 12, margin: '2px 0 0' }}>
+              You have {elsewhere.count} bill{elsewhere.count > 1 ? 's' : ''} saved — latest is in {elsewhere.label}
+            </p>
+          </div>
+          <span className="text-[#D97757] flex-shrink-0" style={{ fontSize: 13, fontWeight: 700 }}>
+            Go →
+          </span>
+        </button>
+      )}
 
       {/* Monthly Target */}
       <motion.div

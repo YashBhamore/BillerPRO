@@ -4,7 +4,7 @@ import {
   AlertTriangle, Loader2, ShieldCheck,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useApp } from '../store';
+import { useApp, localMonthStr } from '../store';
 import { toast } from 'sonner';
 // Vite bundles the worker and hands back a Worker constructor. Using ?worker
 // rather than ?url means we never hand pdf.js a URL to re-fetch: a URL that
@@ -287,7 +287,7 @@ async function consumePendingShare(): Promise<File | null> {
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export function UploadBill() {
-  const { state, addBill, getVendor, setActiveTab } = useApp();
+  const { state, addBill, getVendor, setActiveTab, setSelectedMonth } = useApp();
 
   const [stage, setStage] = useState<Stage>('upload');
   const [fileName, setFileName] = useState('');
@@ -465,6 +465,12 @@ export function UploadBill() {
       billNumber: extractedBillNo.trim() || undefined,
       notes: vendorHint ? `Issuer: ${vendorHint}` : undefined,
     });
+
+    // Show the month the bill belongs to, not whatever month happened to be on
+    // screen. A bill is dated when the vendor issued it, which is usually not
+    // today — so landing back on the current month made a bill that had just
+    // saved correctly look like it had vanished.
+    setSelectedMonth(localMonthStr(extractedDate));
 
     toast.success(`Bill saved! Your cut: ${formatCurrency(Math.round(cut))} 🎉`);
 
