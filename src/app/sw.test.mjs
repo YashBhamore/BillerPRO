@@ -3,7 +3,7 @@
 // http://localhost in CI-style browsers, so this covers the logic; the
 // on-device WhatsApp share is still a manual check.
 //
-//   node public/sw.test.mjs
+//   node src/app/sw.test.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -47,7 +47,7 @@ const ctx = vm.createContext({
   fetch: async () => new Response('network', { status: 200 }),
   setTimeout, clearTimeout,
 });
-vm.runInContext(fs.readFileSync(path.join(here, 'sw.js'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(here, '..', '..', 'public', 'sw.js'), 'utf8'), ctx);
 
 assert.ok(handlers.fetch?.length, 'sw.js must register a fetch handler');
 const onFetch = handlers.fetch[0];
@@ -61,7 +61,7 @@ async function dispatch(request) {
 }
 
 // ── the real thing: a shared PDF arriving from WhatsApp ─────────────────────
-const pdfBytes = fs.readFileSync(path.join(here, '..', 'src', 'app', '__fixtures__', 'invoice.pdf'));
+const pdfBytes = fs.readFileSync(path.join(here, '__fixtures__', 'invoice.pdf'));
 const form = new FormData();
 form.append('title', 'Invoice');
 form.append('file', new File([pdfBytes], 'F&F बिल 5159.pdf', { type: 'application/pdf' }));

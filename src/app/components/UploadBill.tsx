@@ -11,6 +11,9 @@ import { toast } from 'sonner';
 // 404s gets the SPA fallback's HTML instead, and the module import then dies
 // with "Failed to fetch dynamically imported module".
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
+// Tesseract fetches its worker script by URL and wraps it in a Blob, so it
+// needs a URL rather than a Worker constructor.
+import tesseractWorkerUrl from 'tesseract.js/dist/worker.min.js?url';
 
 type Stage = 'upload' | 'extracting' | 'processing' | 'review' | 'duplicate';
 type Confidence = 'high' | 'medium' | 'low';
@@ -204,22 +207,26 @@ async function extractWithClaude(
 // For IMAGE bills: use Tesseract.js OCR locally → mask → send text to Claude
 // Tesseract runs 100% in the browser, no server, no image sent anywhere
 // ─────────────────────────────────────────────────────────────────────────────
+// Everything the OCR engine needs is served from our own origin. Previously
+// tesseract.min.js came from cdnjs with no integrity hash and ran on the main
+// thread, so a bad response from that CDN could have read the stored bills and
+// the Drive token. The engine also pulled its WASM core and language model from
+// jsDelivr at runtime, which meant a photographed bill's contents depended on
+// two third parties staying honest — awkward for a feature whose whole promise
+// is that the image never leaves the device.
+//
+// The model is the same one it was already downloading (4.0.0_best_int), so
+// recognition quality is unchanged. Bundling also makes OCR work offline.
 async function extractTextFromImage(file: File): Promise<string> {
-  // Load Tesseract.js from CDN if not already loaded
-  if (!(window as any).Tesseract) {
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js';
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Failed to load OCR engine'));
-      document.head.appendChild(script);
-    });
-  }
+  const Tesseract = await import('tesseract.js');
 
-  const Tesseract = (window as any).Tesseract;
   const result = await Tesseract.recognize(file, 'eng', {
-    logger: () => {}, // suppress logs
-  });
+    logger: () => {},          // suppress console spam
+    workerPath: tesseractWorkerUrl,
+    corePath: '/tesseract',    // directory: picks the SIMD build when available
+    langPath: '/tessdata',     // eng.traineddata.gz, served by us
+  } as any);
+
   return result.data.text;
 }
 
