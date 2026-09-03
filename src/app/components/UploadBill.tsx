@@ -240,6 +240,43 @@ async function extractFromImage(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared-file pickup (Web Share Target)
+// Must stay in sync with public/sw.js, which writes the entry.
+// ─────────────────────────────────────────────────────────────────────────────
+const SHARE_CACHE = 'billerpro-share';
+const SHARE_KEY = '/pending-share';
+const SHARE_MAX_AGE_MS = 5 * 60 * 1000;
+
+async function consumePendingShare(): Promise<File | null> {
+  if (!('caches' in window)) return null;
+  try {
+    const cache = await caches.open(SHARE_CACHE);
+    const res = await cache.match(SHARE_KEY);
+    if (!res) return null;
+
+    // Delete first, so a file that somehow fails to process can't re-trigger
+    // this on every single app open.
+    await cache.delete(SHARE_KEY);
+
+    // Ignore anything stale — otherwise a share that was never opened would
+    // ambush the user days later, mid-way through unrelated work.
+    const sharedAt = Number(res.headers.get('X-Shared-At') || 0);
+    if (!sharedAt || Date.now() - sharedAt > SHARE_MAX_AGE_MS) return null;
+
+    const blob = await res.blob();
+    if (!blob.size) return null;
+
+    let name = 'shared-bill.pdf';
+    try { name = decodeURIComponent(res.headers.get('X-File-Name') || '') || name; } catch { /* keep default */ }
+    const type = res.headers.get('Content-Type') || blob.type || 'application/pdf';
+
+    return new File([blob], name, { type });
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export function UploadBill() {
@@ -256,49 +293,23 @@ export function UploadBill() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // ── WhatsApp / Share Target handler ────────────────────────────────────
-  // When dad forwards a bill PDF from WhatsApp → BillerPRO,
-  // the service worker intercepts the share and posts the file here.
-  // We also check for a pending share stored while app was closed.
+  // Sharing a bill from WhatsApp makes the service worker stash the file in a
+  // cache and redirect here; this picks it up on mount.
+  //
+  // Deliberately NOT gated on `?tab=upload` being in the URL: Layout's own
+  // effect calls history.replaceState('/') as soon as it sees that parameter,
+  // and it runs before this component is mounted, so the parameter is always
+  // gone by the time we get here. Reading the cache unconditionally is cheap
+  // and does not depend on that ordering.
   useEffect(() => {
-    // Listen for file from service worker (app was open when shared)
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'SHARE_TARGET_FILE') {
-        try {
-          const { fileName, fileType, fileData } = event.data;
-          const file = new File([fileData], fileName, { type: fileType });
-          handleFile(file);
-        } catch (err) {
-          console.error('Share file error:', err);
-        }
-      }
-    };
-    navigator.serviceWorker?.addEventListener('message', handleMessage);
+    let cancelled = false;
 
-    // Check for pending share stored while app was closed
-    const checkPendingShare = async () => {
-      try {
-        const cache = await caches.open('billerpro-share-tmp');
-        const pending = await cache.match('/pending-share');
-        if (pending) {
-          const fileName = pending.headers.get('X-File-Name') || 'shared-bill.pdf';
-          const fileType = pending.headers.get('Content-Type') || 'application/pdf';
-          const blob = await pending.blob();
-          const file = new File([blob], fileName, { type: fileType });
-          await cache.delete('/pending-share');
-          // Small delay to let app render first
-          setTimeout(() => handleFile(file), 500);
-        }
-      } catch { /* no pending share */ }
-    };
+    (async () => {
+      const file = await consumePendingShare();
+      if (file && !cancelled) handleFile(file);
+    })();
 
-    // Only check if launched from share target
-    if (window.location.search.includes('tab=upload')) {
-      checkPendingShare();
-    }
-
-    return () => {
-      navigator.serviceWorker?.removeEventListener('message', handleMessage);
-    };
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line
 
 
